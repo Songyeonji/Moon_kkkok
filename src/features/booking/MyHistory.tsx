@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { usePolling } from '../../hooks/usePolling';
-import { getState, submitRequest } from '../../lib/api';
+import { getCachedState, getState, submitRequest } from '../../lib/api';
 import Spinner from '../../components/Spinner';
 import Dropdown, { type Option } from '../../components/Dropdown';
 import Button from '../../components/Button';
@@ -16,7 +16,7 @@ const NAME_KEY = 'moon_my_name';
 
 export default function MyHistory() {
   const toast = useToast();
-  const { data, loading, error, refresh } = usePolling<AppState>(getState, 12000);
+  const { data, loading, error, refresh } = usePolling<AppState>(getState, 60000, getCachedState());
   const [name, setName] = useState(() => localStorage.getItem(NAME_KEY) ?? '');
   const [changing, setChanging] = useState<Booking | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);

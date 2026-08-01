@@ -52,6 +52,46 @@ async function realPost<T>(action: string, payload: Record<string, unknown> = {}
 // 목업 저장소
 // ────────────────────────────────────────────────────────────
 const MOCK_KEY = 'moon_lesson_mock_v1';
+const STATE_CACHE_KEY = 'moon_lesson_state_v1';
+const STATE_CACHE_TTL_MS = 60 * 60 * 1000;
+
+interface StateCache {
+  cachedAt: number;
+  data: AppState;
+}
+
+export function getCachedState(): AppState | null {
+  if (IS_MOCK) return null;
+  try {
+    const raw = localStorage.getItem(STATE_CACHE_KEY);
+    if (!raw) return null;
+    const cached = JSON.parse(raw) as StateCache;
+    if (!cached.data || Date.now() - cached.cachedAt > STATE_CACHE_TTL_MS) {
+      localStorage.removeItem(STATE_CACHE_KEY);
+      return null;
+    }
+    return cached.data;
+  } catch {
+    localStorage.removeItem(STATE_CACHE_KEY);
+    return null;
+  }
+}
+
+function cacheState(data: AppState) {
+  try {
+    localStorage.setItem(STATE_CACHE_KEY, JSON.stringify({ cachedAt: Date.now(), data } satisfies StateCache));
+  } catch {
+    // 저장 공간 제한이나 비공개 모드에서는 캐시 없이 동작합니다.
+  }
+}
+
+function clearCachedState() {
+  try {
+    localStorage.removeItem(STATE_CACHE_KEY);
+  } catch {
+    // localStorage를 사용할 수 없어도 API 요청은 계속 진행합니다.
+  }
+}
 
 interface MockDB {
   settings: Settings;
@@ -206,7 +246,11 @@ function assertRequestValid(db: MockDB, input: RequestInput) {
 // 공개 API (회원/현황판)
 // ────────────────────────────────────────────────────────────
 export async function getState(): Promise<AppState> {
-  if (!IS_MOCK) return realGet<AppState>('getState');
+  if (!IS_MOCK) {
+    const state = await realGet<AppState>('getState');
+    cacheState(state);
+    return state;
+  }
   const db = loadMock();
   return {
     settings: db.settings,
@@ -219,7 +263,11 @@ export async function getState(): Promise<AppState> {
 }
 
 export async function submitRequest(input: RequestInput): Promise<Booking> {
-  if (!IS_MOCK) return realPost<Booking>('submitRequest', { ...input });
+  if (!IS_MOCK) {
+    const booking = await realPost<Booking>('submitRequest', { ...input });
+    clearCachedState();
+    return booking;
+  }
   const db = loadMock();
   assertRequestValid(db, input);
 

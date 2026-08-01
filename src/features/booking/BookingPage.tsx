@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { usePolling } from '../../hooks/usePolling';
-import { getState } from '../../lib/api';
+import { getCachedState, getState } from '../../lib/api';
 import type { AppState } from '../../lib/types';
 import Spinner from '../../components/Spinner';
 import Button from '../../components/Button';
@@ -15,7 +15,7 @@ interface Preset {
 }
 
 export default function BookingPage() {
-  const { data, loading, error, refresh } = usePolling<AppState>(getState, 12000);
+  const { data, loading, error, refresh } = usePolling<AppState>(getState, 60000, getCachedState());
   const [detailDate, setDetailDate] = useState<string | null>(null);
   const [preset, setPreset] = useState<Preset | null>(null);
 

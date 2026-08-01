@@ -33,7 +33,7 @@ function AdminConsole({ token, onLogout }: { token: string; onLogout: () => void
   const [tab, setTab] = useState<Tab>('approve');
   const { data, loading, error, refresh } = usePolling<AppState & { allBookings: Booking[] }>(
     () => getAdminState(token),
-    10000,
+    60000,
   );
 
   const pending = useMemo(() => (data ? data.allBookings.filter((b) => b.status === 'pending') : []), [data]);
