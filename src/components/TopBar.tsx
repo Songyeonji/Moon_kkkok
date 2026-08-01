@@ -20,9 +20,13 @@ export default function TopBar({ view, onChange }: Props) {
           className="flex shrink-0 items-center gap-2 text-left"
           aria-label="홈으로"
         >
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-600 text-sm font-black text-white">
-            L
-          </span>
+          <img
+            src="/topbar-icon.png"
+            alt=""
+            width={28}
+            height={28}
+            className="h-7 w-7 rounded-lg object-contain"
+          />
           <span className="hidden text-base font-extrabold text-slate-900 sm:block">레슨 예약</span>
         </button>
 

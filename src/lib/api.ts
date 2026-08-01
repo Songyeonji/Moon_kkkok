@@ -69,8 +69,25 @@ function seed(): MockDB {
     capacityPerSlot: 1,
     availableWeekdays: [1, 2, 4, 5], // 월화목금
   };
-  const names = ['김민준', '이서연', '박도윤', '최지우', '정하은', '강시우', '조유나', '윤예준', '임소율', '한지호'];
-  const members: Member[] = names.map((name) => ({ name, active: true }));
+  // 실제 8월 명단(회원별 월 횟수는 매월 달라짐)
+  const roster: { name: string; quota: number }[] = [
+    { name: '박종용', quota: 4 },
+    { name: '정예인', quota: 4 },
+    { name: '홍석봉', quota: 4 },
+    { name: '김서형', quota: 4 },
+    { name: '이명훈', quota: 8 },
+    { name: '전영주', quota: 8 },
+    { name: '박준혁', quota: 8 },
+    { name: '김보람', quota: 8 },
+    { name: '이중걸', quota: 8 },
+    { name: '황동하', quota: 8 },
+    { name: '서영미', quota: 8 },
+    { name: '이은규', quota: 10 },
+    { name: '최유진', quota: 10 },
+    { name: '정일준', quota: 10 },
+    { name: '이해란', quota: 10 },
+  ];
+  const members: Member[] = roster.map((r) => ({ name: r.name, active: true }));
   const base = dayjs().tz('Asia/Seoul');
 
   const blackouts: string[] = [];
@@ -82,12 +99,12 @@ function seed(): MockDB {
   // 신규 신청은 즉시 확정 → 시드도 approved. 승인 큐 데모용으로 '변경 신청' 1건만 대기 상태로 둠.
   const parkId = uid();
   const bookings: Booking[] = [
-    { id: uid(), name: '김민준', date: d0, slot: '19:00', status: 'approved', requestType: 'new', createdAt: now },
-    { id: uid(), name: '이서연', date: d0, slot: '19:20', status: 'approved', requestType: 'new', createdAt: now },
-    { id: parkId, name: '박도윤', date: d0, slot: '19:40', status: 'approved', requestType: 'new', createdAt: now },
+    { id: uid(), name: '박종용', date: d0, slot: '19:00', status: 'approved', requestType: 'new', createdAt: now },
+    { id: uid(), name: '이명훈', date: d0, slot: '19:20', status: 'approved', requestType: 'new', createdAt: now },
+    { id: parkId, name: '이은규', date: d0, slot: '19:40', status: 'approved', requestType: 'new', createdAt: now },
     {
       id: uid(),
-      name: '박도윤',
+      name: '이은규',
       date: d0,
       slot: '20:00',
       status: 'pending',
@@ -97,13 +114,9 @@ function seed(): MockDB {
     },
   ];
 
-  // 이번 달 회원별 신청 가능 횟수(데모): 대부분 8회, 일부는 4/10회
+  // 그 달 명단 = Quotas 의 그 달 행 (매월 회원/횟수가 달라짐)
   const month = base.format('YYYY-MM');
-  const quotas: Quota[] = names.map((name) => ({
-    month,
-    name,
-    quota: name === '이서연' ? 4 : name === '박도윤' ? 10 : 8,
-  }));
+  const quotas: Quota[] = roster.map((r) => ({ month, name: r.name, quota: r.quota }));
 
   return { settings, members, blackouts, bookings, quotas };
 }

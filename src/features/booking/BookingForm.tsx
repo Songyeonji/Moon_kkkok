@@ -5,7 +5,14 @@ import { useToast } from '../../components/Toast';
 import { submitRequest } from '../../lib/api';
 import { formatDateKo, generateSlots, slotRangeLabel } from '../../lib/time';
 import { availableDatesOf } from '../../lib/dates';
-import { currentMonth, memberMonthStats, monthOf, quotaFor, remaining } from '../../lib/progress';
+import {
+  currentMonth,
+  memberMonthStats,
+  monthOf,
+  monthlyRoster,
+  quotaFor,
+  remaining,
+} from '../../lib/progress';
 import type { AppState } from '../../lib/types';
 
 interface Props {
@@ -24,9 +31,16 @@ export default function BookingForm({ state, initialDate = '', initialSlot = '',
   const [slot, setSlot] = useState(initialSlot);
   const [busy, setBusy] = useState(false);
 
+  // 그 달 참여 명단(= Quotas 의 그 달 행)만 노출. 매월 명단이 다름.
+  const rosterMonth = initialDate ? monthOf(initialDate) : currentMonth();
+  const roster = useMemo(
+    () => new Set(monthlyRoster(state.quotas, rosterMonth)),
+    [state.quotas, rosterMonth],
+  );
+
   const memberOptions: Option[] = useMemo(
-    () => state.members.map((m) => ({ value: m.name, label: m.name })),
-    [state.members],
+    () => state.members.filter((m) => roster.has(m.name)).map((m) => ({ value: m.name, label: m.name })),
+    [state.members, roster],
   );
 
   const dateOptions: Option[] = useMemo(
@@ -122,8 +136,8 @@ export default function BookingForm({ state, initialDate = '', initialSlot = '',
         value={name}
         onChange={(v) => setName(v)}
         options={memberOptions}
-        placeholder="이름을 선택하세요"
-        hint="명단에 없으면 관리자에게 등록을 요청하세요."
+        placeholder={memberOptions.length ? '이름을 선택하세요' : '이 달 명단이 아직 없어요'}
+        hint={`${Number(rosterMonth.slice(5, 7))}월 명단 ${memberOptions.length}명 · 명단에 없으면 관리자에게 문의하세요.`}
       />
 
       {/* 월별 신청 현황 */}
@@ -185,7 +199,9 @@ export default function BookingForm({ state, initialDate = '', initialSlot = '',
 
       {quotaBlocked && (
         <p className="rounded-lg bg-warning-soft px-3 py-2 text-xs text-warning-fg">
-          이번 달 신청 가능 횟수({quota}회)를 모두 사용했어요. 기존 예약을 변경하거나 관리자에게 문의하세요.
+          {quota === 0
+            ? `${Number(statMonth.slice(5, 7))}월 신청 대상 명단에 없어요. 관리자에게 문의하세요.`
+            : `이번 달 신청 가능 횟수(${quota}회)를 모두 사용했어요. 기존 예약을 변경하거나 관리자에게 문의하세요.`}
         </p>
       )}
 

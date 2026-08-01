@@ -19,7 +19,8 @@ var H_BOOKINGS = ['id', 'name', 'date', 'slot', 'status', 'requestType', 'supers
 var H_SETTINGS = ['startTime', 'endTime', 'slotMinutes', 'capacityPerSlot', 'availableWeekdays'];
 // Quotas: 달마다 회원별 신청 가능 횟수(학교 일정에 따라 4/8/10 등으로 다름)
 var H_QUOTAS = ['month', 'name', 'quota'];
-var DEFAULT_QUOTA = 8; // Quotas 에 값이 없을 때 기본 횟수
+// 그 달 Quotas 에 행이 없으면 '그 달 참여 대상 아님'(0회). 매월 명단·횟수가 다름.
+var DEFAULT_QUOTA = 0;
 var DEFAULT_WEEKDAYS = [1, 2, 4, 5]; // 월화목금
 
 // ────────────────────────────── 엔트리포인트 ──────────────────────────────
@@ -247,6 +248,9 @@ function submitRequest(input) {
   if (input.requestType === 'new') {
     var month = monthOf(input.date);
     var quota = quotaFor(readQuotas(), input.name, month);
+    if (quota <= 0) {
+      throw new Error(Number(month.slice(5, 7)) + '월 신청 대상 명단에 없습니다. 관리자에게 문의하세요.');
+    }
     var usedMap = {};
     bookings.forEach(function (b) {
       if (b.name === input.name && monthOf(b.date) === month && b.date !== input.date &&
