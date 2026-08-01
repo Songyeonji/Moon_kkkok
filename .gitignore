@@ -4,6 +4,7 @@ dist-ssr
 *.local
 .env
 .env.*.local
+.vercel
 
 # editor / os
 .DS_Store
@@ -11,3 +12,6 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .idea
+
+.vercel
+.env*
