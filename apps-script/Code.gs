@@ -144,11 +144,29 @@ function todayStr() { return Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
 function nowIso() { return Utilities.formatDate(new Date(), TZ, "yyyy-MM-dd'T'HH:mm:ssXXX"); }
 function uid() { return Utilities.getUuid(); }
 
+/** 시트별 기대 헤더 — 헤더 칸이 비어 있어도 값을 제대로 읽기 위한 안전장치 */
+function expectedHeaders(name) {
+  if (name === SH.SETTINGS) return H_SETTINGS;
+  if (name === SH.MEMBERS) return H_MEMBERS;
+  if (name === SH.BLACKOUTS) return H_BLACKOUTS;
+  if (name === SH.BOOKINGS) return H_BOOKINGS;
+  if (name === SH.QUOTAS) return H_QUOTAS;
+  return null;
+}
+
 function readRows(name) {
   var sh = sheet(name);
   if (!sh) throw new Error('시트가 없습니다: ' + name + ' (initSpreadsheet 를 먼저 실행하세요)');
   var values = sh.getDataRange().getValues();
   var headers = values.shift();
+  // 헤더 칸이 비어 있으면(나중에 컬럼을 추가했는데 헤더를 안 넣은 경우)
+  // 기대하는 헤더 이름으로 채워, 값이 있어도 못 읽는 상황을 막는다.
+  var expected = expectedHeaders(name);
+  if (expected) {
+    for (var i = 0; i < expected.length; i++) {
+      if (!String(headers[i] == null ? '' : headers[i]).trim()) headers[i] = expected[i];
+    }
+  }
   return values
     .filter(function (r) { return r.join('') !== ''; })
     .map(function (r) {

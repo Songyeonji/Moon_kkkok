@@ -44,16 +44,38 @@ async function parseResponse<T>(res: Response): Promise<T> {
   return json.data as T;
 }
 
-/** 일시적인 실패(구글 콜드스타트·만료된 리다이렉트)면 한 번 더 시도 */
-async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
-  try {
-    return await fn();
-  } catch (e) {
-    // 서버가 명확히 거부한 요청(정원 초과 등)은 재시도하지 않는다
-    if (e instanceof ApiError && !/서버 연결 실패|응답을 읽지 못했어요/.test(e.message)) throw e;
-    await new Promise((r) => setTimeout(r, 800));
-    return fn();
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * POST 가 서버에 GET 으로 전달되면 doPost 대신 doGet 이 응답한다.
+ * 이때 본문(action 포함)이 통째로 사라져 "알 수 없는 action: " (이름이 빈 값) 이 돌아온다.
+ * → 요청이 실행되지 **않은** 상태이므로 어떤 action 이든 다시 보내도 안전하다.
+ */
+const LOST_BODY = /알 수 없는 action:\s*$/;
+/** 구글 콜드스타트·만료된 리다이렉트 등 네트워크성 실패 */
+const TRANSIENT = /서버 연결 실패|응답을 읽지 못했어요/;
+
+function isLostBody(e: unknown) {
+  return e instanceof ApiError && LOST_BODY.test(e.message);
+}
+function isTransient(e: unknown) {
+  return e instanceof ApiError && TRANSIENT.test(e.message);
+}
+
+/** 일시적인 실패면 잠시 뒤 다시 시도 */
+async function withRetry<T>(fn: () => Promise<T>, tries = 2): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i <= tries; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      // 서버가 명확히 거부한 요청(정원 초과 등)은 재시도하지 않는다
+      if (!isTransient(e) && !isLostBody(e)) throw e;
+      if (i < tries) await sleep(600 * (i + 1));
+    }
   }
+  throw lastErr;
 }
 
 async function realGet<T>(action: string, params: Record<string, string> = {}): Promise<T> {
@@ -96,7 +118,23 @@ async function realPost<T>(action: string, payload: Record<string, unknown> = {}
     });
     return parseResponse<T>(res);
   };
-  return RETRYABLE_ACTIONS.has(action) ? withRetry(run) : run();
+
+  // 멱등 action 은 네트워크성 실패에도 재시도한다.
+  if (RETRYABLE_ACTIONS.has(action)) return withRetry(run);
+
+  // 그 외(submitRequest/decide)는 중복 실행 위험이 있어 재시도하지 않지만,
+  // '본문이 사라진' 경우만은 아직 아무것도 실행되지 않았으므로 안전하게 다시 보낸다.
+  let lastErr: unknown;
+  for (let i = 0; i < 3; i++) {
+    try {
+      return await run();
+    } catch (e) {
+      lastErr = e;
+      if (!isLostBody(e)) throw e;
+      await sleep(600 * (i + 1));
+    }
+  }
+  throw lastErr;
 }
 
 // ────────────────────────────────────────────────────────────
