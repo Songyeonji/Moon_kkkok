@@ -8,7 +8,7 @@ import Modal from '../../components/Modal';
 import StatusBadge from '../../components/Badge';
 import { useToast } from '../../components/Toast';
 import { formatDateKo, slotRangeLabel, todayKST } from '../../lib/time';
-import { currentMonth, memberMonthStats, quotaFor, remaining } from '../../lib/progress';
+import { currentMonth, isPaid, memberMonthStats, quotaFor, remaining } from '../../lib/progress';
 import type { AppState, Booking } from '../../lib/types';
 import BookingForm from './BookingForm';
 
@@ -40,6 +40,7 @@ export default function MyHistory() {
   const stats = name ? memberMonthStats(data.bookings, name, month) : null;
   const quota = name ? quotaFor(data.quotas, name, month) : 0;
   const left = stats ? remaining(quota, stats.used) : 0;
+  const paid = name ? isPaid(data.quotas, name, month) : false;
 
   function pickName(v: string) {
     setName(v);
@@ -80,13 +81,29 @@ export default function MyHistory() {
       </div>
 
       {name && stats && (
-        <div className="grid shrink-0 grid-cols-5 gap-1.5 rounded-xl border border-brand-100 bg-brand-50 p-2.5 text-center">
-          <Stat label="총 횟수" value={quota} />
-          <Stat label="확정" value={stats.approved} tone="success" />
-          <Stat label="완료" value={stats.completed} tone="muted" />
-          <Stat label="대기" value={stats.pending} tone="warning" />
-          <Stat label="남음" value={left} />
-        </div>
+        <>
+          <div className="grid shrink-0 grid-cols-5 gap-1.5 rounded-xl border border-brand-100 bg-brand-50 p-2.5 text-center">
+            <Stat label="총 횟수" value={quota} />
+            <Stat label="확정" value={stats.approved} tone="success" />
+            <Stat label="완료" value={stats.completed} tone="muted" />
+            <Stat label="대기" value={stats.pending} tone="warning" />
+            <Stat label="남음" value={left} />
+          </div>
+
+          {/* 이번 달 레슨비 입금 상태 (관리자가 확인하면 '완료'로 바뀜) */}
+          <div
+            className={`flex shrink-0 items-center justify-between gap-2 rounded-xl px-3 py-2 text-sm ${
+              paid ? 'bg-success-soft text-success-fg' : 'bg-warning-soft text-warning-fg'
+            }`}
+          >
+            <span className="font-semibold">
+              {Number(month.slice(5, 7))}월 레슨비 {paid ? '입금 완료' : '미입금'}
+            </span>
+            <span className="text-xs opacity-80">
+              {paid ? '확인되었어요 🙌' : '입금 후 관리자가 확인하면 완료로 바뀝니다'}
+            </span>
+          </div>
+        </>
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">

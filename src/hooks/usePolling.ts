@@ -5,6 +5,8 @@ interface PollingResult<T> {
   error: string | null;
   loading: boolean;
   refresh: () => void;
+  /** 서버 응답을 기다리지 않고 화면을 먼저 바꾸는 낙관적 업데이트용 */
+  mutate: (updater: (prev: T) => T) => void;
 }
 
 /**
@@ -40,5 +42,10 @@ export function usePolling<T>(fn: () => Promise<T>, intervalMs = 60000, initialD
     return () => clearInterval(timer);
   }, [run, intervalMs]);
 
-  return { data, error, loading, refresh: run };
+  /** 로컬 상태만 즉시 갱신 (서버 저장은 호출자가 백그라운드로 진행) */
+  const mutate = useCallback((updater: (prev: T) => T) => {
+    setData((prev) => (prev === null ? prev : updater(prev)));
+  }, []);
+
+  return { data, error, loading, refresh: run, mutate };
 }

@@ -2,6 +2,7 @@
 // 네이티브 <select> 대신 커스텀 리스트박스 — 둥근 패널·호버·선택 표시로 앱 톤과 맞춤.
 // 접근성: role="listbox" + 키보드(↑↓ Enter Esc Home End) 지원.
 import { useEffect, useId, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 export interface Option {
   value: string;
@@ -38,7 +39,10 @@ export default function Dropdown({
 }: DropdownProps) {
   const [open, setOpen] = useState(false);
   const [activeIdx, setActiveIdx] = useState(-1);
-  const [dropUp, setDropUp] = useState(false);
+  /** 트리거 위치 — 패널을 body 로 포털해 fixed 로 띄운다(레이아웃을 밀지 않고 위에 덮임) */
+  const [anchor, setAnchor] = useState<{ top: number; bottom: number; left: number; width: number; up: boolean } | null>(
+    null,
+  );
 
   const rootRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -51,14 +55,24 @@ export default function Dropdown({
   const selected = options.find((o) => o.value === value);
   const isEmpty = options.length === 0;
 
-  // 바깥 클릭 / Esc 로 닫기
+  // 바깥 클릭으로 닫기 (패널은 포털이라 별도로 확인)
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (rootRef.current?.contains(t) || listRef.current?.contains(t)) return;
+      setOpen(false);
     };
+    // 스크롤/리사이즈 시에는 위치가 어긋나므로 닫는다
+    const onReflow = () => setOpen(false);
     document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
+    window.addEventListener('scroll', onReflow, true);
+    window.addEventListener('resize', onReflow);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      window.removeEventListener('scroll', onReflow, true);
+      window.removeEventListener('resize', onReflow);
+    };
   }, [open]);
 
   // 활성 항목이 보이도록 스크롤
@@ -70,11 +84,12 @@ export default function Dropdown({
 
   function openList() {
     if (disabled || isEmpty) return;
-    // 아래 공간이 부족하면 위로 펼침
     const rect = btnRef.current?.getBoundingClientRect();
     if (rect) {
       const below = window.innerHeight - rect.bottom;
-      setDropUp(below < PANEL_MAX && rect.top > below);
+      // 아래 공간이 부족하면 위로 펼침
+      const up = below < PANEL_MAX && rect.top > below;
+      setAnchor({ top: rect.top, bottom: rect.bottom, left: rect.left, width: rect.width, up });
     }
     const cur = options.findIndex((o) => o.value === value);
     setActiveIdx(cur >= 0 ? cur : firstEnabled());
@@ -187,18 +202,27 @@ export default function Dropdown({
         </svg>
       </button>
 
-      {open && (
-        <ul
-          ref={listRef}
-          id={listId}
-          role="listbox"
-          aria-labelledby={btnId}
-          tabIndex={-1}
-          style={{ maxHeight: PANEL_MAX }}
-          className={`animate-dropdown absolute z-30 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl ring-1 ring-black/5 ${
-            dropUp ? 'bottom-full mb-1' : 'top-full mt-1'
-          }`}
-        >
+      {open &&
+        anchor &&
+        createPortal(
+          <ul
+            ref={listRef}
+            id={listId}
+            role="listbox"
+            aria-labelledby={btnId}
+            tabIndex={-1}
+            onKeyDown={onKeyDown}
+            style={{
+              position: 'fixed',
+              left: anchor.left,
+              width: anchor.width,
+              maxHeight: PANEL_MAX,
+              ...(anchor.up
+                ? { bottom: window.innerHeight - anchor.top + 4 }
+                : { top: anchor.bottom + 4 }),
+            }}
+            className="animate-dropdown z-[70] overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl ring-1 ring-black/5"
+          >
           {options.map((o, i) => {
             const isSelected = o.value === value;
             const isActive = i === activeIdx;
@@ -227,10 +251,11 @@ export default function Dropdown({
                   </svg>
                 )}
               </li>
-            );
-          })}
-        </ul>
-      )}
+              );
+            })}
+          </ul>,
+          document.body,
+        )}
 
       {hint && <p className="mt-1 text-xs text-slate-500">{hint}</p>}
     </div>

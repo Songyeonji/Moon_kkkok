@@ -31,10 +31,17 @@ export default function AdminDashboard() {
 
 function AdminConsole({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>('approve');
-  const { data, loading, error, refresh } = usePolling<AppState & { allBookings: Booking[] }>(
+  const { data, loading, error, refresh, mutate } = usePolling<AppState & { allBookings: Booking[] }>(
     () => getAdminState(token),
     60000,
   );
+
+  /** 낙관적 업데이트: 화면을 먼저 바꾸고, 저장은 백그라운드로. 실패하면 서버 상태로 되돌린다. */
+  type AdminData = AppState & { allBookings: Booking[] };
+  const optimistic = (patch: (prev: AdminData) => AdminData, save: () => Promise<unknown>) => {
+    mutate(patch);
+    save().catch(() => refresh());
+  };
 
   const pending = useMemo(() => (data ? data.allBookings.filter((b) => b.status === 'pending') : []), [data]);
   const byId = useMemo(() => new Map((data?.allBookings ?? []).map((b) => [b.id, b])), [data]);
@@ -61,30 +68,35 @@ function AdminConsole({ token, onLogout }: { token: string; onLogout: () => void
 
   return (
     <div className="flex h-full flex-col gap-3">
-      <div className="flex shrink-0 items-center justify-between">
-        <div className="flex flex-wrap gap-1.5">
-          {tabs.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-semibold transition ${
-                tab === t.key ? 'bg-brand-600 text-white' : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50'
-              }`}
-            >
-              {t.label}
-              {!!t.badge && (
-                <span
-                  className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-xs font-bold ${
-                    tab === t.key ? 'bg-white/25 text-white' : 'bg-brand-600 text-white'
-                  }`}
-                >
-                  {t.badge}
-                </span>
-              )}
-            </button>
-          ))}
+      {/* 모바일에서는 탭이 가로 스크롤되고, 로그아웃 버튼은 항상 오른쪽에 고정 */}
+      <div className="flex shrink-0 items-center gap-2">
+        <div className="-mx-1 min-w-0 flex-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="flex w-max gap-1.5">
+            {tabs.map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm font-semibold transition ${
+                  tab === t.key
+                    ? 'bg-brand-600 text-white'
+                    : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                {t.label}
+                {!!t.badge && (
+                  <span
+                    className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-xs font-bold ${
+                      tab === t.key ? 'bg-white/25 text-white' : 'bg-brand-600 text-white'
+                    }`}
+                  >
+                    {t.badge}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
         </div>
-        <Button variant="ghost" size="sm" onClick={onLogout}>
+        <Button variant="secondary" size="sm" onClick={onLogout} className="shrink-0 whitespace-nowrap">
           로그아웃
         </Button>
       </div>
@@ -100,10 +112,18 @@ function AdminConsole({ token, onLogout }: { token: string; onLogout: () => void
             members={data.members}
             quotas={data.quotas}
             bookings={data.bookings}
-            onDone={refresh}
+            optimistic={optimistic}
           />
         )}
-        {tab === 'members' && <MemberManager token={token} members={data.members} onDone={refresh} />}
+        {tab === 'members' && (
+          <MemberManager
+            token={token}
+            members={data.members}
+            quotas={data.quotas}
+            onDone={refresh}
+            optimistic={optimistic}
+          />
+        )}
         {tab === 'dates' && (
           <DateSlotManager token={token} settings={data.settings} blackouts={data.blackouts} onDone={refresh} />
         )}

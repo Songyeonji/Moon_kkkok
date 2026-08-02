@@ -1,145 +1,77 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import Card from '../../components/Card';
-import Button from '../../components/Button';
-import Dropdown from '../../components/Dropdown';
 import { useToast } from '../../components/Toast';
-import { saveQuotas } from '../../lib/api';
-import {
-  DEFAULT_MONTHLY_QUOTA,
-  QUOTA_OPTIONS,
-  currentMonth,
-  memberMonthStats,
-} from '../../lib/progress';
-import { dayjs, KST } from '../../lib/time';
+import { setPaid } from '../../lib/api';
+import { currentMonth, memberMonthStats } from '../../lib/progress';
 import type { Booking, Member, Quota } from '../../lib/types';
+
+interface AdminData {
+  quotas: Quota[];
+  [key: string]: unknown;
+}
 
 interface Props {
   token: string;
-  members: Member[];
   quotas: Quota[];
   bookings: Booking[]; // pending + approved
-  onDone: () => void;
+  members: Member[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  optimistic: (patch: (prev: any) => any, save: () => Promise<unknown>) => void;
 }
 
-interface Row {
-  name: string;
-  quota: number;
-}
-
-function prevMonth(ym: string) {
-  return dayjs.tz(`${ym}-01`, KST).subtract(1, 'month').format('YYYY-MM');
-}
-
-export default function MonthlyStatus({ token, members, quotas, bookings, onDone }: Props) {
+/** 월별 현황 — 조회 + 입금 확인. 명단/횟수 변경은 [회원 관리] 에서 합니다. */
+export default function MonthlyStatus({ token, quotas, bookings, optimistic }: Props) {
   const toast = useToast();
   const [month, setMonth] = useState(currentMonth());
-  const [rows, setRows] = useState<Row[]>([]);
-  const [dirty, setDirty] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [addName, setAddName] = useState('');
 
-  // 그 달 명단 = Quotas 의 그 달 행들
-  const savedRows = useMemo(
+  const rows = useMemo(
     () =>
       quotas
         .filter((q) => q.month === month)
-        .map((q) => ({ name: q.name, quota: q.quota }))
+        .map((q) => ({ name: q.name, quota: q.quota, paid: !!q.paid }))
         .sort((a, b) => a.name.localeCompare(b.name, 'ko')),
     [quotas, month],
   );
 
-  useEffect(() => {
-    if (!dirty) setRows(savedRows);
-  }, [savedRows, dirty]);
-
-  const inRoster = new Set(rows.map((r) => r.name));
-  const addable = members
-    .filter((m) => m.active && !inRoster.has(m.name))
-    .map((m) => ({ value: m.name, label: m.name }));
-
-  function setQuota(name: string, q: number) {
-    setRows((cur) => cur.map((r) => (r.name === name ? { ...r, quota: q } : r)));
-    setDirty(true);
-  }
-
-  function addRow(name: string) {
-    if (!name || inRoster.has(name)) return;
-    setRows((cur) =>
-      [...cur, { name, quota: DEFAULT_MONTHLY_QUOTA }].sort((a, b) => a.name.localeCompare(b.name, 'ko')),
+  /** 화면은 즉시 바뀌고 저장은 백그라운드 — 느린 왕복을 기다리지 않는다 */
+  function togglePaid(name: string, next: boolean) {
+    optimistic(
+      (prev: AdminData) => ({
+        ...prev,
+        quotas: prev.quotas.map((q) => (q.month === month && q.name === name ? { ...q, paid: next } : q)),
+      }),
+      async () => {
+        try {
+          await setPaid(token, month, name, next);
+        } catch (e) {
+          toast.show(e instanceof Error ? e.message : '입금 상태 저장 실패', 'error');
+          throw e;
+        }
+      },
     );
-    setAddName('');
-    setDirty(true);
   }
 
-  function removeRow(name: string) {
-    setRows((cur) => cur.filter((r) => r.name !== name));
-    setDirty(true);
-  }
-
-  function copyPrevMonth() {
-    const pm = prevMonth(month);
-    const prev = quotas.filter((q) => q.month === pm).map((q) => ({ name: q.name, quota: q.quota }));
-    if (prev.length === 0) {
-      toast.show(`${Number(pm.slice(5, 7))}월 명단이 없어요.`, 'info');
-      return;
-    }
-    setRows(prev.sort((a, b) => a.name.localeCompare(b.name, 'ko')));
-    setDirty(true);
-    toast.show(`${Number(pm.slice(5, 7))}월 명단 ${prev.length}명을 불러왔어요. (저장 필요)`, 'info');
-  }
-
-  async function handleSave() {
-    setSaving(true);
-    try {
-      await saveQuotas(token, month, rows);
-      toast.show(`${Number(month.slice(5, 7))}월 명단을 저장했어요.`, 'success');
-      setDirty(false);
-      onDone();
-    } catch (e) {
-      toast.show(e instanceof Error ? e.message : '저장 실패', 'error');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const totalLessons = rows.reduce((s, r) => s + r.quota, 0);
+  const total = rows.reduce((s, r) => s + r.quota, 0);
+  const done = rows.reduce((s, r) => s + memberMonthStats(bookings, r.name, month).used, 0);
+  const paidCount = rows.filter((r) => r.paid).length;
 
   return (
     <Card
-      title="월별 명단 · 횟수"
+      title="월별 현황"
       right={
         <input
           type="month"
           value={month}
-          onChange={(e) => {
-            setMonth(e.target.value);
-            setDirty(false);
-          }}
+          onChange={(e) => setMonth(e.target.value)}
           className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
         />
       }
     >
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-slate-500">
-          매월 참여 회원과 횟수가 다릅니다. <b>이 달 명단에 있는 사람만</b> 신청할 수 있어요.
-        </p>
-        <Button size="sm" variant="secondary" onClick={copyPrevMonth}>
-          지난달 명단 복사
-        </Button>
-      </div>
-
-      <div className="mb-3 flex items-end gap-2">
-        <Dropdown
-          className="max-w-[14rem]"
-          size="sm"
-          value={addName}
-          onChange={addRow}
-          options={addable}
-          placeholder={addable.length ? '회원 추가...' : '추가할 회원 없음'}
-        />
-        <span className="pb-1.5 text-xs text-slate-500">
-          {rows.length}명 · 총 {totalLessons}회
-        </span>
+      <div className="mb-3 grid grid-cols-4 gap-2 rounded-xl border border-brand-100 bg-brand-50 p-2.5 text-center">
+        <Stat label="명단" value={`${rows.length}명`} />
+        <Stat label="배정 횟수" value={`${total}회`} />
+        <Stat label="신청 완료" value={`${done}회`} />
+        <Stat label="입금" value={`${paidCount}/${rows.length}`} />
       </div>
 
       <div className="overflow-x-auto">
@@ -147,41 +79,37 @@ export default function MonthlyStatus({ token, members, quotas, bookings, onDone
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
               <th className="py-2 pr-2 font-semibold">회원</th>
-              <th className="px-2 py-2 font-semibold">횟수</th>
+              <th className="px-2 py-2 text-center font-semibold">횟수</th>
               <th className="px-2 py-2 text-center font-semibold">확정</th>
               <th className="px-2 py-2 text-center font-semibold">완료</th>
               <th className="px-2 py-2 text-center font-semibold">대기</th>
               <th className="px-2 py-2 text-center font-semibold">남음</th>
-              <th className="px-2 py-2" />
+              <th className="px-2 py-2 text-center font-semibold">입금</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => {
               const s = memberMonthStats(bookings, r.name, month);
               const left = Math.max(0, r.quota - s.used);
-              const options = QUOTA_OPTIONS.includes(r.quota) ? QUOTA_OPTIONS : [r.quota, ...QUOTA_OPTIONS];
               return (
                 <tr key={r.name} className="border-b border-slate-100">
                   <td className="py-2 pr-2 font-medium text-slate-800">{r.name}</td>
-                  <td className="px-2 py-2">
-                    <Dropdown
-                      size="sm"
-                      className="w-24"
-                      value={String(r.quota)}
-                      onChange={(v) => setQuota(r.name, Number(v))}
-                      options={options.map((o) => ({ value: String(o), label: `${o}회` }))}
-                    />
-                  </td>
+                  <td className="px-2 py-2 text-center text-slate-600">{r.quota}</td>
                   <td className="px-2 py-2 text-center font-semibold text-success-fg">{s.approved}</td>
                   <td className="px-2 py-2 text-center text-slate-500">{s.completed}</td>
                   <td className="px-2 py-2 text-center text-warning-fg">{s.pending}</td>
                   <td className="px-2 py-2 text-center font-bold text-brand-700">{left}</td>
-                  <td className="px-2 py-2 text-right">
+                  <td className="px-2 py-2 text-center">
                     <button
-                      onClick={() => removeRow(r.name)}
-                      className="rounded-lg px-2 py-1 text-xs font-semibold text-slate-400 transition hover:bg-danger-soft hover:text-danger-fg"
+                      onClick={() => togglePaid(r.name, !r.paid)}
+                      title="누르면 입금 상태가 바뀝니다"
+                      className={`rounded-lg px-2 py-1 text-xs font-bold transition ${
+                        r.paid
+                          ? 'bg-success-soft text-success-fg hover:brightness-95'
+                          : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                      }`}
                     >
-                      제거
+                      {r.paid ? '완료' : '미입금'}
                     </button>
                   </td>
                 </tr>
@@ -190,20 +118,22 @@ export default function MonthlyStatus({ token, members, quotas, bookings, onDone
             {rows.length === 0 && (
               <tr>
                 <td colSpan={7} className="py-8 text-center text-slate-500">
-                  이 달 명단이 비어 있어요. 위에서 회원을 추가하거나 <b>지난달 명단 복사</b>를 눌러보세요.
+                  {Number(month.slice(5, 7))}월 명단이 없어요. <b>회원 관리</b> 탭에서 추가하세요.
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-
-      <div className="mt-4 flex items-center justify-end gap-2">
-        {dirty && <span className="text-xs text-warning">저장되지 않은 변경사항</span>}
-        <Button onClick={handleSave} loading={saving} disabled={!dirty}>
-          명단 저장
-        </Button>
-      </div>
     </Card>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-white/70 py-1.5">
+      <div className="text-base font-extrabold leading-none text-brand-700">{value}</div>
+      <div className="mt-0.5 text-[11px] text-slate-500">{label}</div>
+    </div>
   );
 }

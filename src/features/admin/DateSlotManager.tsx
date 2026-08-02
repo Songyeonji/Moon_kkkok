@@ -3,8 +3,9 @@ import Card from '../../components/Card';
 import Button from '../../components/Button';
 import { useToast } from '../../components/Toast';
 import { saveBlackouts, updateSettings } from '../../lib/api';
-import { formatDateKo, generateSlots, weekdayKo } from '../../lib/time';
-import { WEEKDAY_LABELS, availableDates } from '../../lib/dates';
+import { generateSlots, todayKST } from '../../lib/time';
+import { WEEKDAY_LABELS, isAvailableWeekday, monthGrid, shiftMonth } from '../../lib/dates';
+import { currentMonth } from '../../lib/progress';
 import type { Settings } from '../../lib/types';
 
 interface Props {
@@ -70,12 +71,11 @@ export default function DateSlotManager({ token, settings, blackouts, onDone }: 
     if (!blkDirty) setBlk(blackouts);
   }, [blackouts, blkDirty]);
 
-  // 요일 규칙상 열리는 후보 날짜(블랙아웃 무시) — 저장된 설정 기준
-  const candidates = useMemo(
-    () => availableDates(settings.availableWeekdays, []),
-    [settings.availableWeekdays],
-  );
+  // 달력으로 보여줄 월
+  const [blkMonth, setBlkMonth] = useState(currentMonth());
+  const weeks = useMemo(() => monthGrid(blkMonth), [blkMonth]);
   const blkSet = new Set(blk);
+  const today = todayKST();
 
   function toggleBlackout(date: string) {
     setBlk((cur) => (cur.includes(date) ? cur.filter((d) => d !== date) : [...cur, date].sort()));
@@ -186,40 +186,83 @@ export default function DateSlotManager({ token, settings, blackouts, onDone }: 
       {/* 사용불가 날짜 */}
       <Card title="사용불가 날짜 지정">
         <p className="mb-3 text-xs text-slate-500">
-          아래는 요일 규칙상 자동으로 열리는 날짜예요. 학교 사정으로 <b>레슨이 없는 날</b>을 눌러 <b className="text-danger">사용불가</b>로
-          바꾸면 회원이 그 날은 신청할 수 없어요.
+          레슨하는 요일만 누를 수 있어요. 학교 사정으로 <b>레슨이 없는 날</b>을 누르면 <b className="text-danger">휴무</b>가 되고,
+          회원은 그 날 신청할 수 없어요. 다시 누르면 해제됩니다.
         </p>
-        {candidates.length === 0 ? (
-          <p className="py-6 text-center text-sm text-slate-500">열리는 날짜가 없어요. (요일 설정을 확인하세요)</p>
-        ) : (
-          <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {candidates.map((date) => {
-              const blocked = blkSet.has(date);
-              return (
-                <li
-                  key={date}
-                  className={`flex items-center justify-between rounded-xl border px-3 py-2 ${
-                    blocked ? 'border-danger/30 bg-danger-soft' : 'border-slate-200 bg-white'
-                  }`}
-                >
-                  <span className={`font-medium ${blocked ? 'text-danger-fg line-through' : 'text-slate-800'}`}>
-                    {formatDateKo(date)} <span className="text-xs opacity-70">{weekdayKo(date)}</span>
-                  </span>
-                  <button
-                    onClick={() => toggleBlackout(date)}
-                    className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
-                      blocked
-                        ? 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50'
-                        : 'bg-danger-soft text-danger-fg hover:brightness-95'
-                    }`}
-                  >
-                    {blocked ? '사용가능으로' : '사용불가'}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+        {/* 월 이동 */}
+        <div className="mb-2 flex items-center justify-between">
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setBlkMonth(shiftMonth(blkMonth, -1))}
+              aria-label="이전 달"
+              className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M12 5l-5 5 5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+            <span className="min-w-[7rem] text-center text-sm font-extrabold text-slate-900">
+              {blkMonth.slice(0, 4)}년 {Number(blkMonth.slice(5, 7))}월
+            </span>
+            <button
+              onClick={() => setBlkMonth(shiftMonth(blkMonth, 1))}
+              aria-label="다음 달"
+              className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M8 5l5 5-5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </div>
+          <span className="text-[11px] text-slate-500">
+            <span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-danger-soft ring-1 ring-danger/30 align-middle" />
+            휴무
+          </span>
+        </div>
+
+        {/* 요일 헤더 */}
+        <div className="grid grid-cols-7 gap-1 pb-1">
+          {WEEKDAY_LABELS.map((w, i) => (
+            <div
+              key={w}
+              className={`text-center text-xs font-bold ${
+                i === 0 ? 'text-danger' : i === 6 ? 'text-blue-600' : 'text-slate-400'
+              }`}
+            >
+              {w}
+            </div>
+          ))}
+        </div>
+
+        {/* 날짜 격자 — 레슨하는 요일만 누를 수 있음 */}
+        <div className="grid grid-cols-7 gap-1">
+          {weeks.flat().map((date) => {
+            const inMonth = date.slice(0, 7) === blkMonth;
+            const isLessonDay = isAvailableWeekday(settings.availableWeekdays, date);
+            const blocked = blkSet.has(date);
+            const clickable = inMonth && isLessonDay;
+            const isToday = date === today;
+
+            let tone = 'border-transparent bg-transparent text-transparent';
+            if (inMonth && !isLessonDay) tone = 'border-slate-100 bg-slate-50 text-slate-300';
+            else if (blocked) tone = 'border-danger/30 bg-danger-soft text-danger-fg font-bold line-through';
+            else if (clickable) tone = 'border-slate-200 bg-white text-slate-700 hover:border-danger/40 hover:bg-danger-soft';
+
+            return (
+              <button
+                key={date}
+                disabled={!clickable}
+                onClick={() => toggleBlackout(date)}
+                title={clickable ? (blocked ? '사용가능으로 되돌리기' : '사용불가로 지정') : undefined}
+                className={`flex h-10 items-center justify-center rounded-lg border text-sm transition ${tone} ${
+                  clickable ? 'cursor-pointer' : 'cursor-default'
+                } ${isToday && inMonth ? 'ring-2 ring-brand-500' : ''}`}
+              >
+                {inMonth ? Number(date.slice(8, 10)) : ''}
+              </button>
+            );
+          })}
+        </div>
         <div className="mt-4 flex items-center justify-end gap-2">
           {blkDirty && <span className="text-xs text-warning">저장되지 않은 변경사항</span>}
           <Button onClick={handleSaveBlackouts} loading={savingBlk} disabled={!blkDirty}>

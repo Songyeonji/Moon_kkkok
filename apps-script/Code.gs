@@ -18,7 +18,8 @@ var H_BOOKINGS = ['id', 'name', 'date', 'slot', 'status', 'requestType', 'supers
 // availableWeekdays: 신청 가능 요일 (일=0..토=6) 콤마문자열. 기본 "1,2,4,5" = 월화목금
 var H_SETTINGS = ['startTime', 'endTime', 'slotMinutes', 'capacityPerSlot', 'availableWeekdays'];
 // Quotas: 달마다 회원별 신청 가능 횟수(학교 일정에 따라 4/8/10 등으로 다름)
-var H_QUOTAS = ['month', 'name', 'quota'];
+// paid: 그 달 레슨비 입금 여부 (관리자만 변경)
+var H_QUOTAS = ['month', 'name', 'quota', 'paid'];
 // 그 달 Quotas 에 행이 없으면 '그 달 참여 대상 아님'(0회). 매월 명단·횟수가 다름.
 var DEFAULT_QUOTA = 0;
 var DEFAULT_WEEKDAYS = [1, 2, 4, 5]; // 월화목금
@@ -27,7 +28,9 @@ var DEFAULT_WEEKDAYS = [1, 2, 4, 5]; // 월화목금
 function doGet(e) {
   try {
     var action = (e && e.parameter && e.parameter.action) || '';
-    if (action === 'getState') return json({ ok: true, data: getState() });
+    if (action === 'getState') {
+      return ContentService.createTextOutput(cachedStateJson()).setMimeType(ContentService.MimeType.JSON);
+    }
     return json({ ok: false, error: '알 수 없는 action: ' + action });
   } catch (err) {
     return json({ ok: false, error: String(err && err.message || err) });
@@ -35,11 +38,24 @@ function doGet(e) {
 }
 
 function doPost(e) {
-  var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  var body, action;
   try {
-    var body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
-    var action = body.action;
+    body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    action = body.action;
+  } catch (err) {
+    return json({ ok: false, error: '잘못된 요청입니다.' });
+  }
+
+  // 읽기 전용 action 은 락을 걸지 않는다(다른 요청을 기다리느라 느려지지 않도록).
+  var isRead = action === 'adminLogin' || action === 'getPending' || action === 'getAdminState';
+  var lock = null;
+  if (!isRead) {
+    lock = LockService.getScriptLock();
+    lock.waitLock(20000);
+    invalidateStateCache(); // 상태가 바뀌므로 캐시 비움
+  }
+
+  try {
     switch (action) {
       case 'submitRequest':
         return json({ ok: true, data: submitRequest(body) });
@@ -70,18 +86,45 @@ function doPost(e) {
       case 'saveQuotas':
         requireAdmin(body.token);
         return json({ ok: true, data: saveQuotas(body.month, body.entries) });
+      case 'setPaid':
+        requireAdmin(body.token);
+        return json({ ok: true, data: setPaid(body.month, body.name, body.paid) });
       default:
         return json({ ok: false, error: '알 수 없는 action: ' + action });
     }
   } catch (err) {
     return json({ ok: false, error: String(err && err.message || err) });
   } finally {
-    lock.releaseLock();
+    if (lock) lock.releaseLock();
   }
 }
 
 function json(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+// ────────────────────────────── 응답 캐시 ──────────────────────────────
+// 시트 읽기(RPC)가 느려서 getState 결과를 짧게 캐싱한다.
+// 쓰기(예약/설정 변경) 시 즉시 무효화하므로 사용자는 항상 최신 상태를 본다.
+var STATE_CACHE_KEY = 'state_v1';
+var STATE_CACHE_SEC = 60;
+
+function cachedStateJson() {
+  var cache = CacheService.getScriptCache();
+  var hit = cache.get(STATE_CACHE_KEY);
+  if (hit) return hit;
+  var payload = JSON.stringify({ ok: true, data: getState() });
+  // 100KB 초과분은 캐시 불가 → 그냥 건너뜀
+  if (payload.length < 95000) cache.put(STATE_CACHE_KEY, payload, STATE_CACHE_SEC);
+  return payload;
+}
+
+function invalidateStateCache() {
+  try {
+    CacheService.getScriptCache().remove(STATE_CACHE_KEY);
+  } catch (e) {
+    // 캐시 삭제 실패는 무시 (다음 만료 때 갱신됨)
+  }
 }
 
 // ────────────────────────────── 관리자 인증 ──────────────────────────────
@@ -169,7 +212,7 @@ function readBlackouts() {
 
 function readQuotas() {
   return readRows(SH.QUOTAS).map(function (r) {
-    return { month: String(r.month).trim(), name: String(r.name).trim(), quota: Number(r.quota) || 0 };
+    return { month: String(r.month).trim(), name: String(r.name).trim(), quota: Number(r.quota) || 0, paid: truthy(r.paid) };
   }).filter(function (q) { return q.month && q.name; });
 }
 
@@ -263,13 +306,16 @@ function submitRequest(input) {
     }
   }
 
-  // 같은 회원의 같은 날짜 기존 '대기' 신청은 자동 철회
+  // 같은 회원의 같은 날짜 기존 '대기' 신청은 자동 철회 (해당 행만 수정)
+  var withdrew = false;
   bookings.forEach(function (b) {
     if (b.name === input.name && b.date === input.date && b.status === 'pending') {
       b.status = 'cancelled';
       b.decidedAt = nowIso();
+      withdrew = true;
     }
   });
+  if (withdrew) writeRows(SH.BOOKINGS, H_BOOKINGS, bookings);
 
   // 신규 신청은 즉시 확정. 변경/취소만 관리자 승인 대기.
   var isNew = input.requestType === 'new';
@@ -286,9 +332,14 @@ function submitRequest(input) {
     decidedAt: isNew ? createdAt : '',
     note: '',
   };
-  bookings.push(booking);
-  writeRows(SH.BOOKINGS, H_BOOKINGS, bookings);
+  // 전체 재작성 대신 한 줄만 추가 → 예약이 쌓여도 저장 속도가 일정하다.
+  appendRow(SH.BOOKINGS, H_BOOKINGS, booking);
   return booking;
+}
+
+function appendRow(name, headers, obj) {
+  var sh = sheet(name);
+  sh.appendRow(headers.map(function (h) { return obj[h] === undefined || obj[h] === null ? '' : obj[h]; }));
 }
 
 // ────────────────────────────── 관리자 API ──────────────────────────────
@@ -364,11 +415,30 @@ function saveBlackouts(blackouts) {
 function saveQuotas(month, entries) {
   var m = String(month).slice(0, 7);
   if (!m) throw new Error('월(month)이 필요합니다.');
-  var others = readQuotas().filter(function (q) { return q.month !== m; });
+  var all = readQuotas();
+  // 명단을 다시 저장해도 기존 입금 상태는 유지한다.
+  var paidMap = {};
+  all.forEach(function (q) { if (q.month === m) paidMap[q.name] = q.paid; });
+  var others = all.filter(function (q) { return q.month !== m; });
   var next = others.concat((entries || []).map(function (e) {
-    return { month: m, name: String(e.name).trim(), quota: Number(e.quota) || 0 };
+    var nm = String(e.name).trim();
+    return { month: m, name: nm, quota: Number(e.quota) || 0, paid: !!paidMap[nm] };
   }).filter(function (e) { return e.name; }));
   writeRows(SH.QUOTAS, H_QUOTAS, next);
+  return { ok: true };
+}
+
+/** 그 달 레슨비 입금 여부 변경 */
+function setPaid(month, name, paid) {
+  var m = String(month).slice(0, 7);
+  var nm = String(name || '').trim();
+  var all = readQuotas();
+  var found = false;
+  all.forEach(function (q) {
+    if (q.month === m && q.name === nm) { q.paid = !!paid; found = true; }
+  });
+  if (!found) throw new Error('그 달 명단에 없는 회원입니다.');
+  writeRows(SH.QUOTAS, H_QUOTAS, all);
   return { ok: true };
 }
 
@@ -406,7 +476,8 @@ function ensureSheet(name, headers) {
   var sh = sheet(name);
   if (!sh) sh = ss().insertSheet(name);
   var first = sh.getRange(1, 1, 1, headers.length).getValues()[0];
-  var needHeader = first.join('') === '' || first[0] !== headers[0];
+  // 컬럼이 추가된 경우에도 헤더를 갱신하도록 전체 비교
+  var needHeader = first.join('|') !== headers.join('|');
   if (needHeader) {
     sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
     sh.setFrozenRows(1);

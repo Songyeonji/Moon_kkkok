@@ -401,7 +401,7 @@ export async function updateSettings(token: string, settings: Settings): Promise
   saveMock(db);
 }
 
-/** 특정 월의 회원별 신청 횟수 일괄 저장(그 달 quota 전체 교체) */
+/** 특정 월의 회원별 신청 횟수 일괄 저장(그 달 quota 전체 교체) — 입금 상태는 유지 */
 export async function saveQuotas(
   token: string,
   month: string,
@@ -410,9 +410,21 @@ export async function saveQuotas(
   if (!IS_MOCK) return void (await realPost('saveQuotas', { token, month, entries }));
   assertAdmin(token);
   const db = loadMock();
+  const prevPaid = new Map(db.quotas.filter((q) => q.month === month).map((q) => [q.name, !!q.paid]));
   db.quotas = db.quotas
     .filter((q) => q.month !== month)
-    .concat(entries.map((e) => ({ month, name: e.name, quota: e.quota })));
+    .concat(entries.map((e) => ({ month, name: e.name, quota: e.quota, paid: prevPaid.get(e.name) ?? false })));
+  saveMock(db);
+}
+
+/** 그 달 레슨비 입금 여부 변경 (관리자 전용) */
+export async function setPaid(token: string, month: string, name: string, paid: boolean): Promise<void> {
+  if (!IS_MOCK) return void (await realPost('setPaid', { token, month, name, paid }));
+  assertAdmin(token);
+  const db = loadMock();
+  const row = db.quotas.find((q) => q.month === month && q.name === name);
+  if (!row) throw new ApiError('그 달 명단에 없는 회원입니다.');
+  row.paid = paid;
   saveMock(db);
 }
 

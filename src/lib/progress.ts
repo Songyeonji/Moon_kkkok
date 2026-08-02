@@ -37,6 +37,11 @@ export function isInRoster(quotas: Quota[], name: string, month: string): boolea
   return quotaFor(quotas, name, month) > 0;
 }
 
+/** 그 달 레슨비를 입금했는지 */
+export function isPaid(quotas: Quota[], name: string, month: string): boolean {
+  return !!quotas.find((q) => q.name === name && q.month === month)?.paid;
+}
+
 export interface MonthStats {
   approved: number; // 확정
   completed: number; // 완료(이미 받은 레슨 = 지난 날짜의 확정)
