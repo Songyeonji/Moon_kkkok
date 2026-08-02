@@ -38,7 +38,8 @@ export default function MemberManager({ token, members, quotas, onDone, optimist
   const [editing, setEditing] = useState<Member | null>(null);
   const [editQuota, setEditQuota] = useState(DEFAULT_MONTHLY_QUOTA);
 
-  const month = currentMonth();
+  // 기본은 이번 달이지만, 관리자가 미리 다음 달로 바꿔 명단을 준비해둘 수 있다(예: 8월 말에 9월로 전환).
+  const [month, setMonth] = useState(currentMonth());
   const monthLabel = `${Number(month.slice(5, 7))}월`;
 
   /** 이번 달 명단(이름 → 횟수) */
@@ -193,7 +194,17 @@ export default function MemberManager({ token, members, quotas, onDone, optimist
   const activeCount = members.filter((m) => m.active).length;
 
   return (
-    <Card title={`회원 명단 (활성 ${activeCount}명 · ${monthLabel} 명단 ${monthQuota.size}명)`}>
+    <Card
+      title={`회원 명단 (활성 ${activeCount}명 · ${monthLabel} 명단 ${monthQuota.size}명)`}
+      right={
+        <input
+          type="month"
+          value={month}
+          onChange={(e) => setMonth(e.target.value)}
+          className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+        />
+      }
+    >
       <div className="mb-2 flex gap-2">
         <input
           value={name}
@@ -210,7 +221,8 @@ export default function MemberManager({ token, members, quotas, onDone, optimist
       {/* 매달 반복 작업 줄이기: 지난달 명단·횟수를 그대로 가져온 뒤 달라진 사람만 수정 */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-slate-500">
-          새 달이 시작되면 <b>지난달 명단 복사</b> 후, 달라진 사람만 <b>수정</b>하세요.
+          우측 상단에서 달을 바꾸면 그 달 명단을 미리 만들 수 있어요(예: 8월 말에 9월로 전환). <b>지난달 명단 복사</b>
+          후 달라진 사람만 <b>수정</b>하세요.
         </p>
         <Button size="sm" variant="secondary" onClick={copyPrevMonth} loading={busy && !pending && !editing}>
           지난달 명단 복사

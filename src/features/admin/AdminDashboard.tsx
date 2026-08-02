@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { usePolling } from '../../hooks/usePolling';
 import { getAdminState } from '../../lib/api';
 import type { AppState, Booking } from '../../lib/types';
-import Spinner from '../../components/Spinner';
+import CoachLoading from '../../components/CoachLoading';
 import Button from '../../components/Button';
 import AdminLogin from './AdminLogin';
 import ApprovalQueue from './ApprovalQueue';
@@ -47,7 +47,7 @@ function AdminConsole({ token, onLogout }: { token: string; onLogout: () => void
   const byId = useMemo(() => new Map((data?.allBookings ?? []).map((b) => [b.id, b])), [data]);
   const resolvePrev = (id?: string) => (id ? byId.get(id) : undefined);
 
-  if (loading && !data) return <Spinner label="관리자 데이터 불러오는 중..." />;
+  if (loading && !data) return <CoachLoading label="관리자 데이터를 불러오는 중" />;
   if (error && !data)
     return (
       <div className="mx-auto max-w-sm space-y-3 pt-6 text-center">

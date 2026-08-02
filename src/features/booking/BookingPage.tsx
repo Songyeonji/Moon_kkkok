@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { usePolling } from '../../hooks/usePolling';
 import { getCachedState, getState } from '../../lib/api';
 import type { AppState } from '../../lib/types';
-import Spinner from '../../components/Spinner';
+import CoachLoading from '../../components/CoachLoading';
 import Button from '../../components/Button';
 import Modal from '../../components/Modal';
 import CalendarBoard from './CalendarBoard';
@@ -19,7 +19,7 @@ export default function BookingPage() {
   const [detailDate, setDetailDate] = useState<string | null>(null);
   const [preset, setPreset] = useState<Preset | null>(null);
 
-  if (loading && !data) return <Spinner />;
+  if (loading && !data) return <CoachLoading />;
   if (error && !data)
     return <div className="rounded-xl bg-danger-soft p-4 text-sm text-danger-fg">데이터를 불러오지 못했어요: {error}</div>;
   if (!data) return null;

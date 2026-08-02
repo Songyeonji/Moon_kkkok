@@ -31,21 +31,37 @@ export default function BookingForm({ state, initialDate = '', initialSlot = '',
   const [slot, setSlot] = useState(initialSlot);
   const [busy, setBusy] = useState(false);
 
-  // 그 달 참여 명단(= Quotas 의 그 달 행)만 노출. 매월 명단이 다름.
-  const rosterMonth = initialDate ? monthOf(initialDate) : currentMonth();
-  const roster = useMemo(
-    () => new Set(monthlyRoster(state.quotas, rosterMonth)),
-    [state.quotas, rosterMonth],
+  const dateOptions: Option[] = useMemo(
+    () => availableDatesOf(state.settings, state.blackouts).map((d) => ({ value: d, label: formatDateKo(d) })),
+    [state.settings, state.blackouts],
   );
+
+  // 신청 가능한 날짜 범위(이번 달·다음 달)에 걸친 모든 달의 명단을 합쳐서 보여준다.
+  // → 관리자가 다음 달 명단을 미리 만들어두면(예: 8월 말에 9월 명단 준비), 달이 바뀌기 전에도
+  //   회원이 바로 다음 달 날짜를 신청할 수 있다.
+  const bookableMonths = useMemo(() => {
+    const months = new Set(dateOptions.map((o) => o.value.slice(0, 7)));
+    return months.size ? months : new Set([currentMonth()]);
+  }, [dateOptions]);
+
+  const roster = useMemo(() => {
+    const names = new Set<string>();
+    bookableMonths.forEach((m) => monthlyRoster(state.quotas, m).forEach((n) => names.add(n)));
+    return names;
+  }, [state.quotas, bookableMonths]);
 
   const memberOptions: Option[] = useMemo(
     () => state.members.filter((m) => roster.has(m.name)).map((m) => ({ value: m.name, label: m.name })),
     [state.members, roster],
   );
 
-  const dateOptions: Option[] = useMemo(
-    () => availableDatesOf(state.settings, state.blackouts).map((d) => ({ value: d, label: formatDateKo(d) })),
-    [state.settings, state.blackouts],
+  const monthsLabel = useMemo(
+    () =>
+      [...bookableMonths]
+        .sort()
+        .map((m) => `${Number(m.slice(5, 7))}월`)
+        .join('·'),
+    [bookableMonths],
   );
 
   const cfg = state.settings;
@@ -136,8 +152,8 @@ export default function BookingForm({ state, initialDate = '', initialSlot = '',
         value={name}
         onChange={(v) => setName(v)}
         options={memberOptions}
-        placeholder={memberOptions.length ? '이름을 선택하세요' : '이 달 명단이 아직 없어요'}
-        hint={`${Number(rosterMonth.slice(5, 7))}월 명단 ${memberOptions.length}명 · 명단에 없으면 관리자에게 문의하세요.`}
+        placeholder={memberOptions.length ? '이름을 선택하세요' : '명단이 아직 없어요'}
+        hint={`${monthsLabel} 명단 ${memberOptions.length}명 · 명단에 없으면 관리자에게 문의하세요.`}
       />
 
       {/* 월별 신청 현황 */}

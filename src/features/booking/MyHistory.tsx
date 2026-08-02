@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { usePolling } from '../../hooks/usePolling';
 import { getCachedState, getState, submitRequest } from '../../lib/api';
-import Spinner from '../../components/Spinner';
+import CoachLoading from '../../components/CoachLoading';
 import Dropdown, { type Option } from '../../components/Dropdown';
 import Button from '../../components/Button';
 import Modal from '../../components/Modal';
@@ -31,7 +31,7 @@ export default function MyHistory() {
       .sort((a, b) => a.date.localeCompare(b.date) || a.slot.localeCompare(b.slot));
   }, [data, name]);
 
-  if (loading && !data) return <Spinner />;
+  if (loading && !data) return <CoachLoading />;
   if (error && !data)
     return <div className="rounded-xl bg-danger-soft p-4 text-sm text-danger-fg">불러오지 못했어요: {error}</div>;
   if (!data) return null;

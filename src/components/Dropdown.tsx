@@ -63,15 +63,22 @@ export default function Dropdown({
       if (rootRef.current?.contains(t) || listRef.current?.contains(t)) return;
       setOpen(false);
     };
-    // 스크롤/리사이즈 시에는 위치가 어긋나므로 닫는다
-    const onReflow = () => setOpen(false);
+    // 스크롤/리사이즈 시 트리거 위치가 바뀔 수 있으므로 패널을 닫지 않고 따라가게 다시 계산한다
+    // (닫아버리면 화면의 다른 영역을 스크롤할 때마다 드롭다운이 사라지는 것처럼 보임)
+    const reposition = () => {
+      const rect = btnRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const below = window.innerHeight - rect.bottom;
+      const up = below < PANEL_MAX && rect.top > below;
+      setAnchor({ top: rect.top, bottom: rect.bottom, left: rect.left, width: rect.width, up });
+    };
     document.addEventListener('mousedown', onDown);
-    window.addEventListener('scroll', onReflow, true);
-    window.addEventListener('resize', onReflow);
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
     return () => {
       document.removeEventListener('mousedown', onDown);
-      window.removeEventListener('scroll', onReflow, true);
-      window.removeEventListener('resize', onReflow);
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
     };
   }, [open]);
 

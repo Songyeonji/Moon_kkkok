@@ -25,27 +25,78 @@ export class ApiError extends Error {}
 // ────────────────────────────────────────────────────────────
 // 실서버 통신 helpers
 // ────────────────────────────────────────────────────────────
-async function realGet<T>(action: string, params: Record<string, string> = {}): Promise<T> {
-  const url = new URL(API_URL);
-  url.searchParams.set('action', action);
-  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  const res = await fetch(url.toString(), { method: 'GET', redirect: 'follow' });
-  const json = await res.json();
+/**
+ * Apps Script 응답 파싱.
+ * /exec 는 googleusercontent.com 의 **일회성 URL** 로 302 리다이렉트되는데,
+ * 그 URL 이 만료되면 404(HTML) 가 돌아온다. JSON 이 아닐 때 친절한 에러로 바꿔준다.
+ */
+async function parseResponse<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  let json: { ok?: boolean; data?: T; error?: string };
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new ApiError(
+      res.ok ? '서버 응답을 읽지 못했어요. 잠시 후 다시 시도해주세요.' : `서버 연결 실패 (${res.status})`,
+    );
+  }
   if (!json.ok) throw new ApiError(json.error ?? '요청 실패');
   return json.data as T;
 }
 
-async function realPost<T>(action: string, payload: Record<string, unknown> = {}): Promise<T> {
-  const res = await fetch(API_URL, {
-    method: 'POST',
-    // text/plain → 브라우저가 preflight(OPTIONS) 를 보내지 않음 (Apps Script CORS 대응)
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    redirect: 'follow',
-    body: JSON.stringify({ action, ...payload }),
+/** 일시적인 실패(구글 콜드스타트·만료된 리다이렉트)면 한 번 더 시도 */
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    // 서버가 명확히 거부한 요청(정원 초과 등)은 재시도하지 않는다
+    if (e instanceof ApiError && !/서버 연결 실패|응답을 읽지 못했어요/.test(e.message)) throw e;
+    await new Promise((r) => setTimeout(r, 800));
+    return fn();
+  }
+}
+
+async function realGet<T>(action: string, params: Record<string, string> = {}): Promise<T> {
+  return withRetry(async () => {
+    const url = new URL(API_URL);
+    url.searchParams.set('action', action);
+    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+    // 브라우저가 302 리다이렉트를 캐싱해 만료된 일회성 URL 을 재사용하는 것을 막는다
+    url.searchParams.set('_', String(Date.now()));
+    const res = await fetch(url.toString(), { method: 'GET', redirect: 'follow', cache: 'no-store' });
+    return parseResponse<T>(res);
   });
-  const json = await res.json();
-  if (!json.ok) throw new ApiError(json.error ?? '요청 실패');
-  return json.data as T;
+}
+
+/**
+ * 재시도해도 안전한(멱등) action 만 자동 재시도한다.
+ * submitRequest/decide 는 두 번 보내면 예약이 중복되거나 혼란스러운 에러가 나므로 제외.
+ */
+const RETRYABLE_ACTIONS = new Set([
+  'adminLogin',
+  'getPending',
+  'getAdminState',
+  'setPaid',
+  'saveQuotas',
+  'saveBlackouts',
+  'updateSettings',
+  'toggleMember',
+  'addMember',
+]);
+
+async function realPost<T>(action: string, payload: Record<string, unknown> = {}): Promise<T> {
+  const run = async () => {
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      // text/plain → 브라우저가 preflight(OPTIONS) 를 보내지 않음 (Apps Script CORS 대응)
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      redirect: 'follow',
+      cache: 'no-store',
+      body: JSON.stringify({ action, ...payload }),
+    });
+    return parseResponse<T>(res);
+  };
+  return RETRYABLE_ACTIONS.has(action) ? withRetry(run) : run();
 }
 
 // ────────────────────────────────────────────────────────────
