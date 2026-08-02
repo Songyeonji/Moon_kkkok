@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-const QUOTES = ['라켓 들어', '공이 목적이 아니라 동작이 목적이다. 그러면 공은 자연스럽게 나온다.', '스매싱은 힘보다 각'];
+const QUOTES = ['라켓 들어','라켓 들어!','라켓 들어!!'];
 
 const TYPE_MS = 55; // 한 글자 타이핑 간격
 const ERASE_MS = 20; // 한 글자 지우는 간격
