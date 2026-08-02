@@ -9,7 +9,22 @@ import { dayjs, generateSlots, isPast } from './time';
 import { availableDatesOf, isAvailableWeekday } from './dates';
 import { monthOf, quotaFor } from './progress';
 
-const API_URL = (import.meta.env.VITE_API_URL ?? '').trim();
+/**
+ * Apps Script 웹앱 주소.
+ * 이 주소는 비밀이 아니다(어차피 클라이언트 번들에 그대로 들어간다).
+ * 환경변수가 비어 있거나 배포 과정에서 `[SENSITIVE]` 같은 placeholder 로 치환돼도
+ * 앱이 죽지 않도록 기본값을 코드에 둔다.
+ */
+const FALLBACK_API_URL =
+  'https://script.google.com/macros/s/AKfycbzTNQ9XG2wcnjddhJ70HeEDFaVxZrp4KgdLTufZzsaucCMY8QoTa4DaXYCyF21UUyXx/exec';
+
+function resolveApiUrl(): string {
+  const raw = (import.meta.env.VITE_API_URL ?? '').trim();
+  // 정상적인 Apps Script /exec 주소일 때만 사용한다.
+  return /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(raw) ? raw : FALLBACK_API_URL;
+}
+
+const API_URL = resolveApiUrl();
 export const IS_MOCK = (import.meta.env.VITE_MOCK ?? '').trim() === '1' || !API_URL;
 
 /** 목업 모드 관리자 비밀번호 (실서버에서는 Apps Script Script Property 로 관리) */
@@ -80,12 +95,10 @@ async function withRetry<T>(fn: () => Promise<T>, tries = 2): Promise<T> {
 
 async function realGet<T>(action: string, params: Record<string, string> = {}): Promise<T> {
   return withRetry(async () => {
-    const url = new URL(API_URL);
-    url.searchParams.set('action', action);
-    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-    // 브라우저가 302 리다이렉트를 캐싱해 만료된 일회성 URL 을 재사용하는 것을 막는다
-    url.searchParams.set('_', String(Date.now()));
-    const res = await fetch(url.toString(), { method: 'GET', redirect: 'follow', cache: 'no-store' });
+    // new URL() 은 주소가 조금이라도 이상하면 예외를 던져 화면에 알 수 없는 에러가 뜬다.
+    // 문자열로 직접 조립해 그런 상황을 만들지 않는다.
+    const qs = new URLSearchParams({ ...params, action, _: String(Date.now()) }).toString();
+    const res = await fetch(`${API_URL}?${qs}`, { method: 'GET', redirect: 'follow', cache: 'no-store' });
     return parseResponse<T>(res);
   });
 }
