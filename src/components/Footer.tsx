@@ -1,4 +1,4 @@
-import { IS_MOCK } from '../lib/api';
+// import { IS_MOCK } from '../lib/api';
 import { formatDateLongKo, todayKST } from '../lib/time';
 
 export default function Footer() {
@@ -9,9 +9,9 @@ export default function Footer() {
           {formatDateLongKo(todayKST())} · 한국 시간(KST)
         </span>
         <span className="flex items-center gap-2">
-          {IS_MOCK && (
+          {/* {IS_MOCK && (
             <span className="rounded-full bg-warning-soft px-2 py-0.5 font-semibold text-warning-fg">목업 모드</span>
-          )}
+          )} */}
           <span>moon._.kkkok</span>
         </span>
       </div>
