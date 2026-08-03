@@ -1,21 +1,24 @@
 import { useEffect, useMemo, useState } from 'react';
 import Card from '../../components/Card';
 import Button from '../../components/Button';
+import Modal from '../../components/Modal';
 import { useToast } from '../../components/Toast';
 import { saveBlackouts, updateSettings } from '../../lib/api';
-import { generateSlots, todayKST } from '../../lib/time';
+import { formatDateKo, generateSlots, todayKST } from '../../lib/time';
 import { WEEKDAY_LABELS, isAvailableWeekday, monthGrid, shiftMonth } from '../../lib/dates';
 import { currentMonth } from '../../lib/progress';
-import type { Settings } from '../../lib/types';
+import type { Booking, Settings } from '../../lib/types';
 
 interface Props {
   token: string;
   settings: Settings;
   blackouts: string[];
+  /** 확정·대기 예약 — 휴무 지정 시 취소될 예약을 미리 보여주기 위해 사용 */
+  bookings: Booking[];
   onDone: () => void;
 }
 
-export default function DateSlotManager({ token, settings, blackouts, onDone }: Props) {
+export default function DateSlotManager({ token, settings, blackouts, bookings, onDone }: Props) {
   const toast = useToast();
 
   // ── 레슨 시간 + 신청 가능 요일 ──
@@ -82,12 +85,34 @@ export default function DateSlotManager({ token, settings, blackouts, onDone }: 
     setBlkDirty(true);
   }
 
-  async function handleSaveBlackouts() {
+  /** 저장하면 취소될 예약들(휴무로 지정한 날짜에 남아 있는 확정·대기 건) */
+  const affected = useMemo(() => {
+    const target = new Set(blk);
+    return bookings
+      .filter((b) => target.has(b.date) && (b.status === 'approved' || b.status === 'pending'))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.slot.localeCompare(b.slot));
+  }, [blk, bookings]);
+
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  function requestSaveBlackouts() {
+    // 취소될 예약이 있으면 먼저 확인받는다
+    if (affected.length > 0) setConfirmOpen(true);
+    else void doSaveBlackouts();
+  }
+
+  async function doSaveBlackouts() {
     setSavingBlk(true);
     try {
-      await saveBlackouts(token, blk);
-      toast.show('사용불가 날짜를 저장했어요.', 'success');
+      const cancelled = await saveBlackouts(token, blk);
+      toast.show(
+        cancelled > 0
+          ? `사용불가 날짜를 저장하고 예약 ${cancelled}건을 취소했어요.`
+          : '사용불가 날짜를 저장했어요.',
+        'success',
+      );
       setBlkDirty(false);
+      setConfirmOpen(false);
       onDone();
     } catch (e) {
       toast.show(e instanceof Error ? e.message : '저장 실패', 'error');
@@ -263,13 +288,52 @@ export default function DateSlotManager({ token, settings, blackouts, onDone }: 
             );
           })}
         </div>
-        <div className="mt-4 flex items-center justify-end gap-2">
+        <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+          {affected.length > 0 && (
+            <span className="text-xs font-semibold text-danger-fg">
+              저장하면 예약 {affected.length}건이 취소됩니다
+            </span>
+          )}
           {blkDirty && <span className="text-xs text-warning">저장되지 않은 변경사항</span>}
-          <Button onClick={handleSaveBlackouts} loading={savingBlk} disabled={!blkDirty}>
+          <Button onClick={requestSaveBlackouts} loading={savingBlk} disabled={!blkDirty}>
             사용불가 저장
           </Button>
         </div>
       </Card>
+
+      {/* 휴무 지정으로 취소될 예약 확인 */}
+      <Modal
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        title="예약이 취소됩니다"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setConfirmOpen(false)} disabled={savingBlk}>
+              취소
+            </Button>
+            <Button variant="danger" onClick={doSaveBlackouts} loading={savingBlk}>
+              저장하고 {affected.length}건 취소
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-slate-700">
+            휴무로 지정한 날짜에 이미 <b className="text-danger-fg">{affected.length}건</b>의 예약이 있어요. 저장하면
+            아래 예약이 <b>모두 취소</b>됩니다. (취소된 만큼 그 달 신청 횟수는 다시 사용할 수 있어요)
+          </p>
+          <ul className="max-h-56 divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-200">
+            {affected.map((b) => (
+              <li key={b.id} className="flex items-center gap-2 px-3 py-2 text-sm">
+                <span className="font-medium text-slate-800">{b.name}</span>
+                <span className="text-slate-500">{formatDateKo(b.date)}</span>
+                <span className="ml-auto font-mono text-xs text-slate-500">{b.slot}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-slate-500">회원에게는 별도 알림이 가지 않으니, 필요하면 따로 안내해주세요.</p>
+        </div>
+      </Modal>
     </div>
   );
 }

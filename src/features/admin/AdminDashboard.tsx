@@ -125,7 +125,13 @@ function AdminConsole({ token, onLogout }: { token: string; onLogout: () => void
           />
         )}
         {tab === 'dates' && (
-          <DateSlotManager token={token} settings={data.settings} blackouts={data.blackouts} onDone={refresh} />
+          <DateSlotManager
+            token={token}
+            settings={data.settings}
+            blackouts={data.blackouts}
+            bookings={data.bookings}
+            onDone={refresh}
+          />
         )}
       </div>
     </div>

@@ -427,7 +427,30 @@ function saveBlackouts(blackouts) {
     return true;
   }).sort().map(function (d) { return { date: d }; });
   writeRows(SH.BLACKOUTS, H_BLACKOUTS, clean);
-  return { ok: true };
+  // 휴무로 지정된 날짜에 남아 있는 예약(확정·대기)은 자동으로 취소한다.
+  var cancelled = cancelBookingsOnDates(clean.map(function (o) { return o.date; }));
+  return { ok: true, cancelled: cancelled };
+}
+
+/** 지정한 날짜들의 확정·대기 예약을 모두 취소하고 취소 건수를 돌려준다 */
+function cancelBookingsOnDates(dates) {
+  if (!dates || !dates.length) return 0;
+  var target = {};
+  dates.forEach(function (d) { target[d] = true; });
+
+  var bookings = readBookings();
+  var now = nowIso();
+  var count = 0;
+  bookings.forEach(function (b) {
+    if (target[b.date] && (b.status === 'approved' || b.status === 'pending')) {
+      b.status = 'cancelled';
+      b.decidedAt = now;
+      b.note = '휴무일 지정으로 자동 취소';
+      count++;
+    }
+  });
+  if (count) writeRows(SH.BOOKINGS, H_BOOKINGS, bookings);
+  return count;
 }
 
 function saveQuotas(month, entries) {

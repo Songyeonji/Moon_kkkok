@@ -487,12 +487,33 @@ export async function toggleMember(token: string, name: string, active: boolean)
   saveMock(db);
 }
 
-export async function saveBlackouts(token: string, blackouts: string[]): Promise<void> {
-  if (!IS_MOCK) return void (await realPost('saveBlackouts', { token, blackouts }));
+/**
+ * 휴무 날짜 저장. 휴무로 지정된 날짜에 남아 있던 예약(확정·대기)은 자동 취소된다.
+ * @returns 자동 취소된 예약 건수
+ */
+export async function saveBlackouts(token: string, blackouts: string[]): Promise<number> {
+  if (!IS_MOCK) {
+    const res = await realPost<{ cancelled?: number }>('saveBlackouts', { token, blackouts });
+    return res?.cancelled ?? 0;
+  }
   assertAdmin(token);
   const db = loadMock();
-  db.blackouts = Array.from(new Set(blackouts)).sort();
+  const dates = Array.from(new Set(blackouts)).sort();
+  db.blackouts = dates;
+
+  const target = new Set(dates);
+  const now = new Date().toISOString();
+  let cancelled = 0;
+  db.bookings.forEach((b) => {
+    if (target.has(b.date) && (b.status === 'approved' || b.status === 'pending')) {
+      b.status = 'cancelled';
+      b.decidedAt = now;
+      b.note = '휴무일 지정으로 자동 취소';
+      cancelled++;
+    }
+  });
   saveMock(db);
+  return cancelled;
 }
 
 export async function updateSettings(token: string, settings: Settings): Promise<void> {
