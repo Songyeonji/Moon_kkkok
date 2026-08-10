@@ -112,6 +112,7 @@ const RETRYABLE_ACTIONS = new Set([
   'getPending',
   'getAdminState',
   'setPaid',
+  'setAdjust',
   'saveQuotas',
   'saveBlackouts',
   'updateSettings',
@@ -323,22 +324,31 @@ function assertRequestValid(db: MockDB, input: RequestInput) {
       throw new ApiError('이미 마감된 시간대입니다. 다른 시간을 선택하세요.');
     }
   }
-  // 월별 신청 횟수 제한 (신규 신청만): 하루 1레슨 기준, 다른 날짜에 이미 쓴 횟수로 판단
+  // 같은 시간대 중복 신청 방지 (같은 날 다른 시간대는 허용)
+  if (input.requestType === 'new') {
+    const dup = db.bookings.find(
+      (b) =>
+        b.name === input.name &&
+        b.date === input.date &&
+        b.slot === input.slot &&
+        (b.status === 'approved' || b.status === 'pending'),
+    );
+    if (dup) throw new ApiError('이미 신청한 시간대예요.');
+  }
+
+  // 월별 신청 횟수 제한 (신규 신청만): 한 타임 = 1회로 계산
   if (input.requestType === 'new') {
     const month = monthOf(input.date);
     const quota = quotaFor(db.quotas, input.name, month);
-    const usedDates = new Set(
-      db.bookings
-        .filter(
-          (b) =>
-            b.name === input.name &&
-            monthOf(b.date) === month &&
-            b.date !== input.date &&
-            (b.status === 'approved' || (b.status === 'pending' && b.requestType === 'new')),
-        )
-        .map((b) => b.date),
-    );
-    if (usedDates.size >= quota) {
+    const adjust = db.quotas.find((q) => q.month === month && q.name === input.name)?.adjust ?? 0;
+    const used =
+      db.bookings.filter(
+        (b) =>
+          b.name === input.name &&
+          monthOf(b.date) === month &&
+          (b.status === 'approved' || (b.status === 'pending' && b.requestType === 'new')),
+      ).length + adjust;
+    if (used >= quota) {
       throw new ApiError(`이번 달 신청 가능 횟수(${quota}회)를 모두 사용했어요.`);
     }
   }
@@ -373,27 +383,34 @@ export async function submitRequest(input: RequestInput): Promise<Booking> {
   const db = loadMock();
   assertRequestValid(db, input);
 
-  // 같은 회원의 같은 날짜에 대한 기존 '대기' 신청은 자동 철회(중복 방지)
-  db.bookings.forEach((b) => {
-    if (b.name === input.name && b.date === input.date && b.status === 'pending') {
-      b.status = 'cancelled';
-      b.decidedAt = new Date().toISOString();
-    }
-  });
-
-  // 신규 신청은 즉시 확정. 변경/취소만 관리자 승인 대기.
   const now = new Date().toISOString();
-  const isNew = input.requestType === 'new';
+
+  // 변경·취소 대상은 즉시 취소 처리 (승인 절차 없음)
+  if (input.supersedesId) {
+    const target = db.bookings.find((b) => b.id === input.supersedesId);
+    if (target && (target.status === 'approved' || target.status === 'pending')) {
+      target.status = 'cancelled';
+      target.decidedAt = now;
+    }
+  }
+
+  // 취소 요청이면 새 행을 만들지 않고 대상만 취소한다
+  if (input.requestType === 'cancel') {
+    saveMock(db);
+    return { ...(db.bookings.find((b) => b.id === input.supersedesId) as Booking) };
+  }
+
+  // 신규·변경 모두 즉시 확정
   const booking: Booking = {
     id: uid(),
     name: input.name,
     date: input.date,
     slot: input.slot,
-    status: isNew ? 'approved' : 'pending',
+    status: 'approved',
     requestType: input.requestType,
     supersedesId: input.supersedesId,
     createdAt: now,
-    decidedAt: isNew ? now : undefined,
+    decidedAt: now,
   };
   db.bookings.push(booking);
   saveMock(db);
@@ -533,10 +550,27 @@ export async function saveQuotas(
   if (!IS_MOCK) return void (await realPost('saveQuotas', { token, month, entries }));
   assertAdmin(token);
   const db = loadMock();
-  const prevPaid = new Map(db.quotas.filter((q) => q.month === month).map((q) => [q.name, !!q.paid]));
-  db.quotas = db.quotas
-    .filter((q) => q.month !== month)
-    .concat(entries.map((e) => ({ month, name: e.name, quota: e.quota, paid: prevPaid.get(e.name) ?? false })));
+  const prev = new Map(db.quotas.filter((q) => q.month === month).map((q) => [q.name, q]));
+  db.quotas = db.quotas.filter((q) => q.month !== month).concat(
+    entries.map((e) => ({
+      month,
+      name: e.name,
+      quota: e.quota,
+      paid: !!prev.get(e.name)?.paid,
+      adjust: prev.get(e.name)?.adjust ?? 0,
+    })),
+  );
+  saveMock(db);
+}
+
+/** 관리자가 사용 횟수를 손으로 더하거나 뺀다 (+1 = 1회 더 쓴 것으로 처리) */
+export async function setAdjust(token: string, month: string, name: string, adjust: number): Promise<void> {
+  if (!IS_MOCK) return void (await realPost('setAdjust', { token, month, name, adjust }));
+  assertAdmin(token);
+  const db = loadMock();
+  const row = db.quotas.find((q) => q.month === month && q.name === name);
+  if (!row) throw new ApiError('그 달 명단에 없는 회원입니다.');
+  row.adjust = adjust;
   saveMock(db);
 }
 

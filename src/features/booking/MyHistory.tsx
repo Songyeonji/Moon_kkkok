@@ -8,7 +8,7 @@ import Modal from '../../components/Modal';
 import StatusBadge from '../../components/Badge';
 import { useToast } from '../../components/Toast';
 import { formatDateKo, slotRangeLabel, todayKST } from '../../lib/time';
-import { currentMonth, isPaid, memberMonthStats, quotaFor, remaining } from '../../lib/progress';
+import { adjustFor, currentMonth, isPaid, memberMonthStats, quotaFor, remaining } from '../../lib/progress';
 import type { AppState, Booking } from '../../lib/types';
 import BookingForm from './BookingForm';
 
@@ -37,7 +37,7 @@ export default function MyHistory() {
   if (!data) return null;
 
   const memberOptions: Option[] = data.members.map((m) => ({ value: m.name, label: m.name }));
-  const stats = name ? memberMonthStats(data.bookings, name, month) : null;
+  const stats = name ? memberMonthStats(data.bookings, name, month, adjustFor(data.quotas, name, month)) : null;
   const quota = name ? quotaFor(data.quotas, name, month) : 0;
   const left = stats ? remaining(quota, stats.used) : 0;
   const paid = name ? isPaid(data.quotas, name, month) : false;
@@ -57,7 +57,7 @@ export default function MyHistory() {
         requestType: 'cancel',
         supersedesId: b.id,
       });
-      toast.show('취소 신청 완료! 관리자 승인 후 취소돼요.', 'success');
+      toast.show('예약을 취소했어요.', 'success');
       refresh();
     } catch (e) {
       toast.show(e instanceof Error ? e.message : '취소 신청 실패', 'error');
@@ -171,6 +171,7 @@ export default function MyHistory() {
           <BookingForm
             state={data}
             initialDate={changing.date}
+            changeTarget={changing}
             onSubmitted={() => {
               setChanging(null);
               refresh();

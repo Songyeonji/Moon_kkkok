@@ -30,7 +30,7 @@ export default function AdminDashboard() {
 }
 
 function AdminConsole({ token, onLogout }: { token: string; onLogout: () => void }) {
-  const [tab, setTab] = useState<Tab>('approve');
+  const [tab, setTab] = useState<Tab>('monthly');
   const { data, loading, error, refresh, mutate } = usePolling<AppState & { allBookings: Booking[] }>(
     () => getAdminState(token),
     60000,
@@ -59,8 +59,9 @@ function AdminConsole({ token, onLogout }: { token: string; onLogout: () => void
     );
   if (!data) return null;
 
+  // 신청·변경·취소가 모두 즉시 반영되므로 승인 대기는 예전 데이터가 남아 있을 때만 보여준다.
   const tabs: { key: Tab; label: string; badge?: number }[] = [
-    { key: 'approve', label: '승인 대기', badge: pending.length },
+    ...(pending.length > 0 ? [{ key: 'approve' as Tab, label: '승인 대기', badge: pending.length }] : []),
     { key: 'monthly', label: '월별 현황' },
     { key: 'members', label: '회원 관리' },
     { key: 'dates', label: '날짜·시간' },

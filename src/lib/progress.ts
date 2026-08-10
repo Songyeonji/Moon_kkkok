@@ -42,19 +42,29 @@ export function isPaid(quotas: Quota[], name: string, month: string): boolean {
   return !!quotas.find((q) => q.name === name && q.month === month)?.paid;
 }
 
+/** 관리자가 손으로 더하거나 뺀 사용 횟수(+면 더 쓴 것, -면 돌려준 것) */
+export function adjustFor(quotas: Quota[], name: string, month: string): number {
+  return quotas.find((q) => q.name === name && q.month === month)?.adjust ?? 0;
+}
+
 export interface MonthStats {
   approved: number; // 확정
   completed: number; // 완료(이미 받은 레슨 = 지난 날짜의 확정)
   upcoming: number; // 예정(다가오는 확정)
   pending: number; // 대기중 신청
-  used: number; // 횟수 소진분(확정 + 신규 대기) → 남은 신청 계산용
+  used: number; // 횟수 소진분(예약 건수 + 관리자 조정) → 남은 신청 계산용
 }
 
-/** 회원의 특정 월 진행 현황 */
+/**
+ * 회원의 특정 월 진행 현황.
+ * 한 타임(슬롯) = 1회로 계산한다. 같은 날 여러 타임을 신청하면 그만큼 횟수를 쓴다.
+ * `adjust` 는 관리자가 손으로 더하거나 뺀 값.
+ */
 export function memberMonthStats(
   bookings: Booking[],
   name: string,
   month: string,
+  adjust = 0,
   today = todayKST(),
 ): MonthStats {
   const inMonth = bookings.filter((b) => b.name === name && monthOf(b.date) === month);
@@ -62,18 +72,15 @@ export function memberMonthStats(
   const completed = approvedRows.filter((b) => b.date < today).length;
   const upcoming = approvedRows.length - completed;
   const pending = inMonth.filter((b) => b.status === 'pending').length;
-  // 횟수 소진 = 확정 + 신규 대기(new) 의 "날짜" 기준(하루 1레슨). 변경/취소 신청은 총량 불변.
-  const usedDates = new Set(
-    inMonth
-      .filter((b) => b.status === 'approved' || (b.status === 'pending' && b.requestType === 'new'))
-      .map((b) => b.date),
+  const usedRows = inMonth.filter(
+    (b) => b.status === 'approved' || (b.status === 'pending' && b.requestType === 'new'),
   );
   return {
     approved: approvedRows.length,
     completed,
     upcoming,
     pending,
-    used: usedDates.size,
+    used: Math.max(0, usedRows.length + adjust),
   };
 }
 

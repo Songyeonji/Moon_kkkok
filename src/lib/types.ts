@@ -38,6 +38,7 @@ export interface Quota {
   name: string;
   quota: number; // 그 달에 신청 가능한 총 횟수 (예: 4 / 8 / 10)
   paid?: boolean; // 그 달 레슨비 입금 여부 (관리자만 변경, 회원도 조회 가능)
+  adjust?: number; // 관리자가 손으로 더하거나 뺀 사용 횟수(+면 차감, -면 복구)
 }
 
 /** 공개 상태(회원 화면·현황판용): 민감정보 없음 */

@@ -6,6 +6,7 @@ import { submitRequest } from '../../lib/api';
 import { formatDateKo, generateSlots, slotRangeLabel } from '../../lib/time';
 import { availableDatesOf } from '../../lib/dates';
 import {
+  adjustFor,
   currentMonth,
   memberMonthStats,
   monthOf,
@@ -13,20 +14,31 @@ import {
   quotaFor,
   remaining,
 } from '../../lib/progress';
-import type { AppState } from '../../lib/types';
+import type { AppState, Booking } from '../../lib/types';
 
 interface Props {
   state: AppState;
   /** 달력에서 넘어온 경우 날짜/시간 미리 선택 */
   initialDate?: string;
   initialSlot?: string;
+  /**
+   * 지정하면 **그 예약의 시간을 바꾸는** 변경 신청이 된다(관리자 승인 필요).
+   * 없으면 항상 새 신청 → 같은 날 다른 시간대도 연달아 신청할 수 있다.
+   */
+  changeTarget?: Booking;
   /** 신청 성공 시(데이터 갱신 + 모달 닫기) */
   onSubmitted: () => void;
 }
 
-export default function BookingForm({ state, initialDate = '', initialSlot = '', onSubmitted }: Props) {
+export default function BookingForm({
+  state,
+  initialDate = '',
+  initialSlot = '',
+  changeTarget,
+  onSubmitted,
+}: Props) {
   const toast = useToast();
-  const [name, setName] = useState('');
+  const [name, setName] = useState(changeTarget?.name ?? '');
   const [date, setDate] = useState(initialDate);
   const [slot, setSlot] = useState(initialSlot);
   const [busy, setBusy] = useState(false);
@@ -67,43 +79,60 @@ export default function BookingForm({ state, initialDate = '', initialSlot = '',
   const cfg = state.settings;
   const slots = date ? generateSlots(cfg.startTime, cfg.endTime, cfg.slotMinutes) : [];
 
-  // 선택한 회원의 해당 날짜 현재 상태
-  const myApproved = useMemo(
-    () => state.bookings.find((b) => b.name === name && b.date === date && b.status === 'approved'),
-    [state.bookings, name, date],
-  );
-  const myPending = useMemo(
-    () => state.bookings.find((b) => b.name === name && b.date === date && b.status === 'pending'),
+  // 선택한 회원이 그 날짜에 이미 가진 예약들 (같은 날 여러 타임 가능)
+  const myOnDate = useMemo(
+    () =>
+      state.bookings
+        .filter((b) => b.name === name && b.date === date && (b.status === 'approved' || b.status === 'pending'))
+        .sort((a, b) => a.slot.localeCompare(b.slot)),
     [state.bookings, name, date],
   );
 
   const capacity = cfg.capacityPerSlot;
-  const approvedCountFor = (s: string) =>
-    state.bookings.filter((b) => b.date === date && b.slot === s && b.status === 'approved').length;
 
   const slotOptions: Option[] = useMemo(() => {
+    const mineSlots = new Set(myOnDate.map((b) => b.slot));
     return slots.map((s) => {
-      const left = capacity - approvedCountFor(s);
-      const mine = myApproved?.slot === s;
-      const full = left <= 0 && !mine;
-      const suffix = mine ? ' · 내 예약' : full ? ' · 마감' : capacity > 1 ? ` · 남은자리 ${left}` : '';
-      return { value: s, label: `${slotRangeLabel(s, cfg.slotMinutes)}${suffix}`, disabled: full };
+      const taken = state.bookings.filter(
+        (b) => b.date === date && b.slot === s && b.status === 'approved',
+      ).length;
+      const left = capacity - taken;
+      // 변경 모드에서는 원래 내 시간도 고를 수 있게 열어둔다
+      const isMyTarget = changeTarget?.slot === s;
+      const mine = mineSlots.has(s) && !isMyTarget;
+      const full = left <= 0 && !isMyTarget && !mine;
+      const suffix = mine
+        ? ' · 이미 신청함'
+        : isMyTarget
+          ? ' · 현재 예약'
+          : full
+            ? ' · 마감'
+            : capacity > 1
+              ? ` · 남은자리 ${left}`
+              : '';
+      return {
+        value: s,
+        label: `${slotRangeLabel(s, cfg.slotMinutes)}${suffix}`,
+        // 이미 내가 신청한 시간은 중복 신청 불가
+        disabled: full || mine,
+      };
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slots, state.bookings, myApproved, capacity, cfg]);
+  }, [slots, state.bookings, myOnDate, capacity, cfg, date, changeTarget]);
 
   // 월별 신청 현황 (선택한 날짜의 달 기준, 없으면 이번 달)
   const statMonth = date ? monthOf(date) : currentMonth();
   const stats = useMemo(
-    () => memberMonthStats(state.bookings, name, statMonth),
-    [state.bookings, name, statMonth],
+    () => memberMonthStats(state.bookings, name, statMonth, adjustFor(state.quotas, name, statMonth)),
+    [state.bookings, state.quotas, name, statMonth],
   );
   const quota = name ? quotaFor(state.quotas, name, statMonth) : 0;
   const left = remaining(quota, stats.used);
 
-  const isChange = !!myApproved;
+  const isChange = !!changeTarget;
+  // 변경은 횟수를 더 쓰지 않으므로 잔여 횟수와 무관
   const quotaBlocked = !isChange && left <= 0;
-  const canSubmit = !!name && !!date && !!slot && !busy && slot !== myApproved?.slot && !quotaBlocked;
+  const canSubmit =
+    !!name && !!date && !!slot && !busy && !quotaBlocked && (!isChange || slot !== changeTarget?.slot);
 
   async function handleSubmit() {
     if (!canSubmit) return;
@@ -114,32 +143,12 @@ export default function BookingForm({ state, initialDate = '', initialSlot = '',
         date,
         slot,
         requestType: isChange ? 'change' : 'new',
-        supersedesId: myApproved?.id,
+        supersedesId: changeTarget?.id,
       });
       toast.show(isChange ? '변경 신청 완료! 관리자 승인 후 반영돼요.' : '신청 완료! 바로 확정되었어요.', 'success');
       onSubmitted();
     } catch (e) {
       toast.show(e instanceof Error ? e.message : '신청 실패', 'error');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleCancel() {
-    if (!myApproved) return;
-    setBusy(true);
-    try {
-      await submitRequest({
-        name,
-        date,
-        slot: myApproved.slot,
-        requestType: 'cancel',
-        supersedesId: myApproved.id,
-      });
-      toast.show('취소 신청 완료! 관리자 승인 후 취소돼요.', 'success');
-      onSubmitted();
-    } catch (e) {
-      toast.show(e instanceof Error ? e.message : '취소 신청 실패', 'error');
     } finally {
       setBusy(false);
     }
@@ -188,19 +197,26 @@ export default function BookingForm({ state, initialDate = '', initialSlot = '',
         disabled={!name || dateOptions.length === 0}
       />
 
-      {/* 현재 상태 안내 */}
-      {date && (myApproved || myPending) && (
+      {/* 이 날짜에 이미 잡아둔 예약 — 같은 날 여러 타임도 가능 */}
+      {date && myOnDate.length > 0 && (
         <div className="rounded-xl bg-slate-50 p-3 text-sm">
-          {myApproved && (
-            <p className="text-success-fg">
-              ✅ 현재 확정: <b>{myApproved.slot}</b>
-            </p>
-          )}
-          {myPending && (
-            <p className="text-warning-fg">
-              ⏳ 신청 대기중: <b>{myPending.slot}</b> ({myPending.requestType === 'cancel' ? '취소' : '예약'} 승인 대기)
-            </p>
-          )}
+          <p className="mb-1 text-xs font-semibold text-slate-500">이 날 내 예약 {myOnDate.length}건</p>
+          <div className="flex flex-wrap gap-1.5">
+            {myOnDate.map((b) => (
+              <span
+                key={b.id}
+                className={`rounded-md px-1.5 py-0.5 text-xs font-semibold ${
+                  b.id === changeTarget?.id
+                    ? 'bg-brand-100 text-brand-700'
+                    : 'bg-success-soft text-success-fg'
+                }`}
+              >
+                {b.slot}
+                {b.id === changeTarget?.id && ' (변경 중)'}
+              </span>
+            ))}
+          </div>
+          {!isChange && <p className="mt-1.5 text-xs text-slate-500">다른 시간을 골라 연달아 신청할 수 있어요.</p>}
         </div>
       )}
 
@@ -223,18 +239,13 @@ export default function BookingForm({ state, initialDate = '', initialSlot = '',
 
       <div className="flex flex-wrap gap-2 pt-1">
         <Button onClick={handleSubmit} disabled={!canSubmit} loading={busy} className="flex-1">
-          {isChange ? '변경 신청' : '신청하기'}
+          {isChange ? '시간 변경' : '신청하기'}
         </Button>
-        {myApproved && (
-          <Button variant="danger" onClick={handleCancel} disabled={busy}>
-            예약 취소 신청
-          </Button>
-        )}
       </div>
 
       <p className="text-xs text-slate-500">
-        * 신규 신청은 <b>바로 확정</b>됩니다. <b>변경·취소</b>는 관리자 승인 후 반영되며, 반려되면 이전 예약이 그대로
-        유지돼요.
+        * 신청·변경·취소 모두 <b>바로 반영</b>됩니다. 같은 날 <b>여러 시간대</b>도 신청할 수 있고, 한 타임에는 한 명만
+        들어갑니다.
       </p>
     </div>
   );

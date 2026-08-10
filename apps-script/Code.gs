@@ -19,7 +19,8 @@ var H_BOOKINGS = ['id', 'name', 'date', 'slot', 'status', 'requestType', 'supers
 var H_SETTINGS = ['startTime', 'endTime', 'slotMinutes', 'capacityPerSlot', 'availableWeekdays'];
 // Quotas: 달마다 회원별 신청 가능 횟수(학교 일정에 따라 4/8/10 등으로 다름)
 // paid: 그 달 레슨비 입금 여부 (관리자만 변경)
-var H_QUOTAS = ['month', 'name', 'quota', 'paid'];
+// adjust: 관리자가 손으로 더하거나 뺀 사용 횟수(+면 차감, -면 복구)
+var H_QUOTAS = ['month', 'name', 'quota', 'paid', 'adjust'];
 // 그 달 Quotas 에 행이 없으면 '그 달 참여 대상 아님'(0회). 매월 명단·횟수가 다름.
 var DEFAULT_QUOTA = 0;
 var DEFAULT_WEEKDAYS = [1, 2, 4, 5]; // 월화목금
@@ -89,6 +90,9 @@ function doPost(e) {
       case 'setPaid':
         requireAdmin(body.token);
         return json({ ok: true, data: setPaid(body.month, body.name, body.paid) });
+      case 'setAdjust':
+        requireAdmin(body.token);
+        return json({ ok: true, data: setAdjust(body.month, body.name, body.adjust) });
       default:
         return json({ ok: false, error: '알 수 없는 action: ' + action });
     }
@@ -230,7 +234,7 @@ function readBlackouts() {
 
 function readQuotas() {
   return readRows(SH.QUOTAS).map(function (r) {
-    return { month: String(r.month).trim(), name: String(r.name).trim(), quota: Number(r.quota) || 0, paid: truthy(r.paid) };
+    return { month: String(r.month).trim(), name: String(r.name).trim(), quota: Number(r.quota) || 0, paid: truthy(r.paid), adjust: Number(r.adjust) || 0 };
   }).filter(function (q) { return q.month && q.name; });
 }
 
@@ -239,6 +243,12 @@ function monthOf(date) { return String(date).slice(0, 7); }
 function quotaFor(quotas, name, month) {
   var found = quotas.filter(function (q) { return q.name === name && q.month === month; })[0];
   return found ? found.quota : DEFAULT_QUOTA;
+}
+
+/** 관리자가 손으로 더하거나 뺀 사용 횟수 */
+function adjustFor(quotas, name, month) {
+  var found = quotas.filter(function (q) { return q.name === name && q.month === month; })[0];
+  return found ? (found.adjust || 0) : 0;
 }
 
 function readBookings() {
@@ -305,49 +315,64 @@ function submitRequest(input) {
     if (approved >= settings.capacityPerSlot) throw new Error('이미 마감된 시간대입니다. 다른 시간을 선택하세요.');
   }
 
-  // 월별 신청 횟수 제한(신규만): 하루 1레슨 기준, 다른 날짜에 이미 쓴 횟수로 판단
+  // 같은 시간대 중복만 막는다. 같은 날 다른 시간대는 연달아 신청 가능.
+  if (input.requestType === 'new') {
+    var dup = bookings.filter(function (b) {
+      return b.name === input.name && b.date === input.date && b.slot === input.slot &&
+        (b.status === 'approved' || b.status === 'pending');
+    })[0];
+    if (dup) throw new Error('이미 신청한 시간대예요.');
+  }
+
+  // 월별 신청 횟수 제한(신규만): 한 타임 = 1회로 계산 + 관리자 보정(adjust) 반영
   if (input.requestType === 'new') {
     var month = monthOf(input.date);
-    var quota = quotaFor(readQuotas(), input.name, month);
+    var quotas = readQuotas();
+    var quota = quotaFor(quotas, input.name, month);
     if (quota <= 0) {
       throw new Error(Number(month.slice(5, 7)) + '월 신청 대상 명단에 없습니다. 관리자에게 문의하세요.');
     }
-    var usedMap = {};
+    var used = adjustFor(quotas, input.name, month);
     bookings.forEach(function (b) {
-      if (b.name === input.name && monthOf(b.date) === month && b.date !== input.date &&
+      if (b.name === input.name && monthOf(b.date) === month &&
           (b.status === 'approved' || (b.status === 'pending' && b.requestType === 'new'))) {
-        usedMap[b.date] = true;
+        used++;
       }
     });
-    if (Object.keys(usedMap).length >= quota) {
+    if (used >= quota) {
       throw new Error('이번 달 신청 가능 횟수(' + quota + '회)를 모두 사용했어요.');
     }
   }
 
-  // 같은 회원의 같은 날짜 기존 '대기' 신청은 자동 철회 (해당 행만 수정)
-  var withdrew = false;
-  bookings.forEach(function (b) {
-    if (b.name === input.name && b.date === input.date && b.status === 'pending') {
-      b.status = 'cancelled';
-      b.decidedAt = nowIso();
-      withdrew = true;
-    }
-  });
-  if (withdrew) writeRows(SH.BOOKINGS, H_BOOKINGS, bookings);
+  var now = nowIso();
 
-  // 신규 신청은 즉시 확정. 변경/취소만 관리자 승인 대기.
-  var isNew = input.requestType === 'new';
-  var createdAt = nowIso();
+  // 변경·취소 대상은 즉시 취소 처리 (승인 절차 없음)
+  var changed = false;
+  if (input.supersedesId) {
+    bookings.forEach(function (b) {
+      if (b.id === input.supersedesId && (b.status === 'approved' || b.status === 'pending')) {
+        b.status = 'cancelled';
+        b.decidedAt = now;
+        changed = true;
+      }
+    });
+  }
+  if (changed) writeRows(SH.BOOKINGS, H_BOOKINGS, bookings);
+
+  // 취소는 새 행을 만들지 않는다
+  if (input.requestType === 'cancel') return { ok: true, cancelled: changed };
+
+  // 신규·변경 모두 즉시 확정
   var booking = {
     id: uid(),
     name: input.name,
     date: input.date,
     slot: input.slot || '',
-    status: isNew ? 'approved' : 'pending',
+    status: 'approved',
     requestType: input.requestType,
     supersedesId: input.supersedesId || '',
-    createdAt: createdAt,
-    decidedAt: isNew ? createdAt : '',
+    createdAt: now,
+    decidedAt: now,
     note: '',
   };
   // 전체 재작성 대신 한 줄만 추가 → 예약이 쌓여도 저장 속도가 일정하다.
@@ -457,15 +482,32 @@ function saveQuotas(month, entries) {
   var m = String(month).slice(0, 7);
   if (!m) throw new Error('월(month)이 필요합니다.');
   var all = readQuotas();
-  // 명단을 다시 저장해도 기존 입금 상태는 유지한다.
+  // 명단을 다시 저장해도 기존 입금 상태·횟수 보정은 유지한다.
   var paidMap = {};
-  all.forEach(function (q) { if (q.month === m) paidMap[q.name] = q.paid; });
+  var adjMap = {};
+  all.forEach(function (q) {
+    if (q.month === m) { paidMap[q.name] = q.paid; adjMap[q.name] = q.adjust || 0; }
+  });
   var others = all.filter(function (q) { return q.month !== m; });
   var next = others.concat((entries || []).map(function (e) {
     var nm = String(e.name).trim();
-    return { month: m, name: nm, quota: Number(e.quota) || 0, paid: !!paidMap[nm] };
+    return { month: m, name: nm, quota: Number(e.quota) || 0, paid: !!paidMap[nm], adjust: adjMap[nm] || 0 };
   }).filter(function (e) { return e.name; }));
   writeRows(SH.QUOTAS, H_QUOTAS, next);
+  return { ok: true };
+}
+
+/** 사용 횟수 보정값 설정 (+1 = 1회 더 쓴 것으로 처리, -1 = 1회 돌려줌) */
+function setAdjust(month, name, adjust) {
+  var m = String(month).slice(0, 7);
+  var nm = String(name || '').trim();
+  var all = readQuotas();
+  var found = false;
+  all.forEach(function (q) {
+    if (q.month === m && q.name === nm) { q.adjust = Number(adjust) || 0; found = true; }
+  });
+  if (!found) throw new Error('그 달 명단에 없는 회원입니다.');
+  writeRows(SH.QUOTAS, H_QUOTAS, all);
   return { ok: true };
 }
 
