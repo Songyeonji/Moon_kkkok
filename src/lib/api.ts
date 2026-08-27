@@ -118,6 +118,7 @@ const RETRYABLE_ACTIONS = new Set([
   'updateSettings',
   'toggleMember',
   'addMember',
+  'deleteMember',
 ]);
 
 async function realPost<T>(action: string, payload: Record<string, unknown> = {}): Promise<T> {
@@ -501,6 +502,16 @@ export async function toggleMember(token: string, name: string, active: boolean)
   const db = loadMock();
   const m = db.members.find((x) => x.name === name);
   if (m) m.active = active;
+  saveMock(db);
+}
+
+/** 회원을 명단에서 완전히 삭제한다. 그 회원의 월별 신청 횟수(Quotas) 행도 함께 지운다. */
+export async function deleteMember(token: string, name: string): Promise<void> {
+  if (!IS_MOCK) return void (await realPost('deleteMember', { token, name }));
+  assertAdmin(token);
+  const db = loadMock();
+  db.members = db.members.filter((x) => x.name !== name);
+  db.quotas = db.quotas.filter((q) => q.name !== name);
   saveMock(db);
 }
 

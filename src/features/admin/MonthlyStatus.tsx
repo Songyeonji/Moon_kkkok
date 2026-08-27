@@ -20,17 +20,23 @@ interface Props {
 }
 
 /** 월별 현황 — 조회 + 입금 확인. 명단/횟수 변경은 [회원 관리] 에서 합니다. */
-export default function MonthlyStatus({ token, quotas, bookings, optimistic }: Props) {
+export default function MonthlyStatus({ token, quotas, bookings, members, optimistic }: Props) {
   const toast = useToast();
   const [month, setMonth] = useState(currentMonth());
+
+  /** 비활성화(또는 삭제)된 회원은 월별 현황에서 숨긴다 */
+  const activeNames = useMemo(
+    () => new Set(members.filter((m) => m.active).map((m) => m.name)),
+    [members],
+  );
 
   const rows = useMemo(
     () =>
       quotas
-        .filter((q) => q.month === month)
+        .filter((q) => q.month === month && activeNames.has(q.name))
         .map((q) => ({ name: q.name, quota: q.quota, paid: !!q.paid, adjust: q.adjust ?? 0 }))
         .sort((a, b) => a.name.localeCompare(b.name, 'ko')),
-    [quotas, month],
+    [quotas, month, activeNames],
   );
 
   /** 화면은 즉시 바뀌고 저장은 백그라운드 — 느린 왕복을 기다리지 않는다 */

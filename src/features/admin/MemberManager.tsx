@@ -4,7 +4,7 @@ import Button from '../../components/Button';
 import Modal from '../../components/Modal';
 import Dropdown from '../../components/Dropdown';
 import { useToast } from '../../components/Toast';
-import { addMember, saveQuotas, toggleMember } from '../../lib/api';
+import { addMember, deleteMember, saveQuotas, toggleMember } from '../../lib/api';
 import { DEFAULT_MONTHLY_QUOTA, QUOTA_OPTIONS, currentMonth } from '../../lib/progress';
 import { shiftMonth } from '../../lib/dates';
 import type { Member, Quota } from '../../lib/types';
@@ -37,6 +37,9 @@ export default function MemberManager({ token, members, quotas, onDone, optimist
   // 횟수 수정 모달
   const [editing, setEditing] = useState<Member | null>(null);
   const [editQuota, setEditQuota] = useState(DEFAULT_MONTHLY_QUOTA);
+
+  // 회원 삭제 확인 모달
+  const [deleting, setDeleting] = useState<Member | null>(null);
 
   // 기본은 이번 달이지만, 관리자가 미리 다음 달로 바꿔 명단을 준비해둘 수 있다(예: 8월 말에 9월로 전환).
   const [month, setMonth] = useState(currentMonth());
@@ -112,6 +115,30 @@ export default function MemberManager({ token, members, quotas, onDone, optimist
   function openEdit(m: Member) {
     setEditQuota(monthQuota.get(m.name) ?? DEFAULT_MONTHLY_QUOTA);
     setEditing(m);
+  }
+
+  /** 회원을 명단에서 완전히 삭제 (그 회원의 월별 횟수 행도 함께 삭제됨) — 화면 즉시 반영 */
+  function confirmDelete() {
+    if (!deleting) return;
+    const target = deleting;
+    setDeleting(null);
+    toast.show(`'${target.name}' 님을 회원 명단에서 삭제했어요.`, 'success');
+
+    optimistic(
+      (prev: AdminData) => ({
+        ...prev,
+        members: prev.members.filter((x) => x.name !== target.name),
+        quotas: prev.quotas.filter((q) => q.name !== target.name),
+      }),
+      async () => {
+        try {
+          await deleteMember(token, target.name);
+        } catch (e) {
+          toast.show(e instanceof Error ? e.message : '삭제 실패', 'error');
+          throw e;
+        }
+      },
+    );
   }
 
   /** 이번 달 횟수 저장 (명단에 없으면 추가됨) — 화면 즉시 반영 */
@@ -271,6 +298,12 @@ export default function MemberManager({ token, members, quotas, onDone, optimist
                 >
                   {m.active ? '비활성화' : '활성화'}
                 </button>
+                <button
+                  onClick={() => setDeleting(m)}
+                  className="shrink-0 rounded-lg px-2 py-1 text-xs font-semibold text-danger-fg transition hover:bg-danger-soft"
+                >
+                  삭제
+                </button>
               </li>
             );
           })}
@@ -279,7 +312,7 @@ export default function MemberManager({ token, members, quotas, onDone, optimist
 
       <p className="mt-3 text-xs text-slate-500">
         배지는 <b>{monthLabel} 신청 횟수</b>예요. <b>수정</b>으로 횟수를 바꾸거나 명단에서 뺄 수 있고,
-        <b>비활성화</b>하면 신청 화면에서 아예 숨겨집니다.
+        <b>비활성화</b>하면 신청 화면에서 아예 숨겨집니다. <b>삭제</b>는 회원과 모든 달의 횟수 기록을 완전히 지웁니다.
       </p>
 
       {/* 횟수 수정 모달 */}
@@ -328,6 +361,34 @@ export default function MemberManager({ token, members, quotas, onDone, optimist
                 {monthLabel} 명단에서 빼기
               </button>
             )}
+          </div>
+        )}
+      </Modal>
+
+      {/* 회원 삭제 확인 모달 */}
+      <Modal
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        title="회원 삭제"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setDeleting(null)} disabled={busy}>
+              취소
+            </Button>
+            <Button variant="danger" onClick={confirmDelete} loading={busy}>
+              삭제하기
+            </Button>
+          </>
+        }
+      >
+        {deleting && (
+          <div className="space-y-3">
+            <p className="text-sm text-slate-700">
+              <b className="text-danger-fg">{deleting.name}</b> 님을 정말 삭제하시겠습니까?
+            </p>
+            <p className="rounded-xl bg-danger-soft px-3 py-2 text-xs text-danger-fg">
+              회원 명단에서 사라지고 <b>모든 달의 신청 횟수·입금 기록</b>도 함께 삭제됩니다. 되돌릴 수 없어요.
+            </p>
           </div>
         )}
       </Modal>

@@ -78,6 +78,9 @@ function doPost(e) {
       case 'toggleMember':
         requireAdmin(body.token);
         return json({ ok: true, data: toggleMember(body.name, body.active) });
+      case 'deleteMember':
+        requireAdmin(body.token);
+        return json({ ok: true, data: deleteMember(body.name) });
       case 'saveBlackouts':
         requireAdmin(body.token);
         return json({ ok: true, data: saveBlackouts(body.blackouts) });
@@ -441,6 +444,16 @@ function toggleMember(name, active) {
   var members = readMembers();
   members.forEach(function (m) { if (m.name === name) m.active = !!active; });
   writeRows(SH.MEMBERS, H_MEMBERS, members);
+  return { ok: true };
+}
+
+/** 회원을 명단에서 완전히 삭제한다. 그 회원의 월별 신청 횟수(Quotas) 행도 함께 지운다. */
+function deleteMember(name) {
+  var nm = String(name || '').trim();
+  var members = readMembers().filter(function (m) { return m.name !== nm; });
+  writeRows(SH.MEMBERS, H_MEMBERS, members);
+  var quotas = readQuotas().filter(function (q) { return q.name !== nm; });
+  writeRows(SH.QUOTAS, H_QUOTAS, quotas);
   return { ok: true };
 }
 
