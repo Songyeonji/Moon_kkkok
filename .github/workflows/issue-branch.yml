@@ -1,0 +1,46 @@
+name: Create Issue Branch
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: issue-branch-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  create-branch:
+    name: Create feat branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Create feat-[issue number]-[issue title] branch
+        env:
+          LC_ALL: C.UTF-8
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+        run: |
+          slug=$(printf '%s' "$ISSUE_TITLE" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^[:alnum:]]+/-/g; s/-+/-/g; s/^-+//; s/-+$//')
+          slug=${slug:0:50}
+          slug=${slug%-}
+          branch="feat-${ISSUE_NUMBER}-${slug:-issue}"
+          echo "branch: $branch"
+
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "\`$branch\` 브랜치가 이미 있어 건너뜁니다." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          git push origin "HEAD:refs/heads/$branch"
+
+          echo "### 이슈 브랜치 생성 완료" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`$branch\` (기준: \`${GITHUB_REF_NAME}\`)" >> "$GITHUB_STEP_SUMMARY"
